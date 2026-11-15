@@ -78,6 +78,11 @@ def parser() -> argparse.ArgumentParser:
     q.add_argument("--renders", action="store_true")
     q = commands.add_parser("demo", help="建立纯程序测试素材项目，不消耗图像额度")
     q.add_argument("project", type=Path)
+    q = commands.add_parser("web", help="启动本机制作资料提交网页")
+    q.add_argument("--workspace", type=Path, default=Path.cwd())
+    q.add_argument("--port", type=int, default=8765)
+    q = commands.add_parser("inbox", help="读取网页提交的待处理项目与反馈")
+    q.add_argument("--workspace", type=Path, default=Path.cwd())
     return p
 
 
@@ -86,6 +91,15 @@ def execute(args):
     root = args.project.resolve() if hasattr(args, "project") else None
     if command == "doctor":
         result = doctor()
+    elif command == "web":
+        from .web.server import serve
+        serve(args.workspace, args.port)
+        result = {"status": "stopped"}
+    elif command == "inbox":
+        from .web.server import Desk
+        desk = Desk(args.workspace)
+        result = [{**item, "project_path": str(desk.project(item["id"]))}
+                  for item in desk.summaries() if item["status"] in {"queued", "feedback"}]
     elif command == "inspect":
         result = inspect_media(args.file, not args.probe_only)
     elif command == "mask":

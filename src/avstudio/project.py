@@ -89,7 +89,10 @@ def register_asset(root: Path, source: Path, asset_id: str, origin: str,
                    usage_terms="unspecified") -> dict:
     identifier(asset_id)
     data = load_project(root)
-    info = image_info(source)
+    try:
+        info = image_info(source)
+    except OSError as exc:
+        raise StudioError(f"图片无效或无法读取：{source.name}") from exc
     digest = sha256(source)
     # Immutable content-addressed file: replacement retains original revisions.
     relative = f"assets/{asset_id}/{digest}{source.suffix.lower()}"

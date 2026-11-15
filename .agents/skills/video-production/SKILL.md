@@ -11,6 +11,8 @@ description: 将用户文案设计为分镜、统一美术图片、可选分层�
 
 先读取项目的 `project.json`、`planning/handoff.md` 和现有素材，识别交付范围：images、layers、shots、roughcut。已有决定不重复询问。
 
+用户可通过本地网页提交。开始工作前用 `avstudio inbox` 查看待处理资料，阅读该项目 `planning/brief.md`、`submission.json` 和 `feedback.json`。审核问题整理到网页可见的方案文件中，用户可以在网页提交决定，无需复制回聊天。状态和产物更新规则见 [网页交接说明](../../../docs/WEB.md)。
+
 阅读 [制作流程](../../../docs/WORKFLOW.md) 中当前步骤；执行命令与数据示例见 [使用指南](../../../docs/USAGE.md)。跨 AI 工具可直接阅读本技能，不要求特定模型。
 
 ## 制作步骤

@@ -1,0 +1,2 @@
+/* Kept separate so document previews remain readable on a narrow screen. */
+.document-preview{font-size:11px;border:1px solid var(--line);border-radius:4px;background:#f6f6ef;padding:9px 11px}.document-preview summary{cursor:pointer;color:var(--green)}.document-preview pre{font:12px/1.9 var(--body);white-space:pre-wrap;overflow-wrap:anywhere;max-height:350px;overflow:auto;margin:12px 0 0}

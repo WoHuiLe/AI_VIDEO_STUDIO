@@ -1,6 +1,6 @@
 # 制作流程与指导问答
 
-此文档是通用制作规范。执行者可以是不同 AI，也可以由用户手工完成一部分。Skill 入口位于 `planning/skills/video-production/SKILL.md`。
+此文档是通用制作规范。执行者可以是不同 AI，也可以由用户手工完成一部分。当前 Skill 入口位于 `.agents/skills/video-production/SKILL.md`。网页操作流程见 `WEB.md`。
 
 ## 启动与选择交付范围
 

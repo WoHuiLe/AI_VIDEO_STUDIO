@@ -20,10 +20,13 @@ def package(root: Path, include_renders=False) -> Path:
     files = {local(root, "project.json"), local(root, data["script"]),
              local(root, "planning/storyboard.csv"), local(root, "planning/assets.csv")}
     for name in ["visual_task.md", "handoff.md", "character_bible.md", "style.md",
-                 "review_notes.md", "prompts.md"]:
+                 "review_notes.md", "prompts.md", "director.json", "shot_assets.json",
+                 "brief.md", "submission.json", "feedback.json"]:
         path = local(root, f"planning/{name}")
         if path.exists():
             files.add(path)
+    for path in (root / "planning").glob("storyboard_*.md"):
+        files.add(local(root, path.relative_to(root).as_posix()))
     for asset in data["assets"].values():
         files.add(local(root, asset["path"]))
     if data.get("narration"):

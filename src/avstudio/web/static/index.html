@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>制作台 · AI Video Studio</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/documents.css">
+  <link rel="stylesheet" href="/workflow.css">
+  <script src="/workflow.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar wrap">
+    <a class="brand" href="/" aria-label="AI Video Studio 首页"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>AI VIDEO STUDIO<small>个人影像制作台</small></span></a>
+    <span class="local-indicator"><span></span> 本机工作空间</span>
+  </header>
+  <main class="wrap">
+    <section class="intro">
+      <p class="eyebrow">FROM WORDS TO FRAMES</p>
+      <h1>把故事交给画面<span>。</span></h1>
+      <p class="intro-copy">放入文案，选好方向。分镜、配图与镜头，从这里开始。</p>
+    </section>
+    <div class="workspace">
+      <section class="paper" aria-labelledby="new-project-heading">
+        <div class="paper-head"><div><p class="eyebrow">NEW PROJECT</p><h2 id="new-project-heading">开始一个新作品</h2></div><span class="draft-state" id="draft-state">文字在本机自动暂存</span></div>
+        <form id="project-form">
+          <fieldset class="form-section">
+            <legend><span class="step">01</span> 你的文案</legend>
+            <label for="title">作品名称 <span class="required">必填</span></label>
+            <input id="title" name="title" type="text" placeholder="给这段故事起个名字" maxlength="100" autocomplete="off" required>
+            <div class="label-row"><label for="script">文案正文 <span class="required">必填</span></label><label class="text-upload" for="script-file">从 TXT / Markdown 导入 <span aria-hidden="true">↗</span></label></div>
+            <input id="script-file" type="file" accept=".txt,.md,text/plain,text/markdown" class="visually-hidden">
+            <textarea id="script" name="script" rows="10" placeholder="粘贴完整文案。可以按自然段分隔，保留你原本的表达和语气……" maxlength="200000" required></textarea>
+            <div class="under-input"><span id="script-source">先准备文字也可以，配音稍后补充。</span><span id="character-count">0 字</span></div>
+          </fieldset>
+          <fieldset class="form-section">
+            <legend><span class="step">02</span> 想做成什么样</legend>
+            <label>这次希望拿到</label>
+            <div class="scope-options">
+              <label class="scope-option"><input type="radio" name="scope" value="images"><span><strong>图片素材</strong><small>配图交给我剪辑</small></span></label>
+              <label class="scope-option"><input type="radio" name="scope" value="shots" checked><span><strong>动态镜头</strong><small>独立片段，导入剪映</small></span></label>
+              <label class="scope-option"><input type="radio" name="scope" value="roughcut"><span><strong>无字幕粗剪</strong><small>先串成一段完整画面</small></span></label>
+              <label class="scope-option"><input type="radio" name="scope" value="layers"><span><strong>分层素材</strong><small>保留后续制作空间</small></span></label>
+            </div>
+            <div class="two-columns">
+              <div><label for="style">画面风格</label><select id="style" name="style"><option value="绘本电影感">绘本电影感</option><option value="清新治愈插画">清新治愈插画</option><option value="写实电影感">写实电影感</option><option value="跟随参考素材">跟随参考素材</option><option value="根据文案设计">根据文案设计</option></select></div>
+              <div><label for="ratio">画面比例</label><select id="ratio" name="ratio"><option value="16:9">16:9 · 横屏</option><option value="9:16">9:16 · 竖屏</option><option value="1:1">1:1 · 方形</option></select></div>
+            </div>
+            <label for="notes">想要的感觉 <span class="optional">选填</span></label>
+            <textarea id="notes" name="notes" rows="3" maxlength="10000" placeholder="例如：温暖但不要过度煽情，少一点人物正脸，多一些生活细节。"></textarea>
+            <details class="more-options"><summary>补充需要保留或避免的内容 <span>＋</span></summary><label for="must-keep">一定要保留</label><textarea id="must-keep" name="must_keep" rows="2" maxlength="5000" placeholder="真实地点、人物特征、重要物件、原文中的关键句……"></textarea><label for="avoid">不希望出现</label><textarea id="avoid" name="avoid" rows="2" maxlength="5000" placeholder="不喜欢的画风、人物呈现或画面元素……"></textarea></details>
+          </fieldset>
+          <fieldset class="form-section attachments-section">
+            <legend><span class="step">03</span> 已有的素材 <span class="optional">全部选填</span></legend>
+            <p class="section-hint">有就放进来，没有也可以直接提交。</p>
+            <div class="upload-grid">
+              <div><label class="upload-zone" for="narration"><span class="upload-symbol" aria-hidden="true">♪</span><strong>添加配音</strong><small>本人录音或已生成的旁白</small><span class="upload-action">选择音频</span></label><input id="narration" type="file" accept=".wav,.mp3,.m4a,.flac,.aac,.ogg" class="visually-hidden"></div>
+              <div><label class="upload-zone" id="reference-drop" for="references"><span class="upload-symbol frame-symbol" aria-hidden="true">▧</span><strong>添加参考素材</strong><small>人物照片、风格参考或生活视频</small><span class="upload-action">选择文件 / 拖入这里</span></label><input id="references" type="file" accept=".png,.jpg,.jpeg,.webp,.mp4,.mov,.txt,.md" multiple class="visually-hidden"></div>
+            </div>
+            <div id="selected-files" class="selected-files" aria-live="polite"></div>
+            <p class="file-hint">支持常用图片、音频和视频；每次最多 20 个文件，总计 100 MB。素材只保存在这台电脑。</p>
+          </fieldset>
+          <div class="submit-area"><label class="start-option"><input id="start-now" name="start_now" type="checkbox" value="1"> 提交后开始设计分镜</label><p id="executor-message" class="section-hint">正在检查本机执行能力……</p><p id="form-message" class="form-message" role="status" aria-live="polite"></p><button class="primary-button" id="submit-button" type="submit">保存制作资料 <span aria-hidden="true">↗</span></button><p class="submit-note">分镜完成后会在作品详情中等待你审核；无需再到聊天里重复提交。</p></div>
+        </form>
+      </section>
+      <aside class="sidebar">
+        <section class="project-panel" aria-labelledby="projects-heading"><div class="sidebar-head"><div><p class="eyebrow">YOUR STORIES</p><h2 id="projects-heading">我的作品</h2></div><button class="icon-button" id="refresh-projects" type="button" aria-label="刷新作品列表">↻</button></div><div id="project-list" class="project-list" aria-live="polite"><p class="empty-copy">正在读取作品……</p></div></section>
+        <section class="process-note"><span class="note-index">THE PROCESS</span><h3>先把方向做对，<br>再让画面动起来。</h3><ol><li><span>01</span> 理解文案，设计分镜</li><li><span>02</span> 确认画风，制作关键画面</li><li><span>03</span> 按需生成镜头，交付素材</li></ol><p>审核和修改意见，也在作品详情里提交。</p></section>
+      </aside>
+    </div>
+    <footer class="footer"><span>AI VIDEO STUDIO</span><span>每一个镜头，都从一句话开始。</span></footer>
+  </main>
+  <dialog id="project-dialog" aria-labelledby="detail-title"><div class="dialog-head"><div><p class="eyebrow">PROJECT DETAILS</p><h2 id="detail-title"></h2></div><button class="icon-button" id="close-dialog" type="button" aria-label="关闭作品详情">×</button></div><div id="detail-content"></div><form id="feedback-form"><h3>补充资料与修改意见</h3><div class="two-columns"><div><label for="feedback-stage">针对哪个部分</label><select id="feedback-stage" name="stage"><option value="general">整体 / 补充资料</option><option value="storyboard">分镜方案</option><option value="artwork">配图与美术</option><option value="motion">动态镜头</option><option value="delivery">最终交付</option></select></div><div><label for="feedback-decision">你的决定</label><select id="feedback-decision" name="decision"><option value="note">补充说明</option><option value="changes">需要修改</option><option value="approve">这个部分通过</option></select></div></div><label for="feedback-note">具体说明</label><textarea id="feedback-note" name="note" rows="3" maxlength="10000" placeholder="例如：第三个镜头改成窗边的细节，人物形象沿用目前的参考图。"></textarea><div class="feedback-upload-row"><label class="small-file-button" for="feedback-files">＋ 补充文件</label><input id="feedback-files" type="file" accept=".png,.jpg,.jpeg,.webp,.mp4,.mov,.wav,.mp3,.m4a,.flac,.aac,.ogg,.txt,.md" multiple class="visually-hidden"><label class="small-file-button" for="feedback-audio">♪ 添加 / 替换配音</label><input id="feedback-audio" type="file" accept=".wav,.mp3,.m4a,.flac,.aac,.ogg" class="visually-hidden"></div><p id="feedback-files-label" class="section-hint"></p><p id="feedback-message" class="form-message" role="status"></p><button class="primary-button" id="feedback-button" type="submit">保存反馈与补充资料</button></form></dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>
