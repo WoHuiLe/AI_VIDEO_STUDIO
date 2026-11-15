@@ -1,24 +1,36 @@
-# AI Video Studio · 方案评审包
+# AI Video Studio
 
-状态：待用户评审。日期：2026-11-15。
+状态：本地工具 V0.1.0 已实现并进行技术验证。日期：2026-11-15。
 
 工程目录：`C:\ZCP\AI_VIDEO_STUDIO`。历史材料中的其他工程目录均不采用。
 
 本工程将用户文案转化为有叙事设计的图片与动态镜头，沉淀跨 AI 工具可复用的制作方法和本地辅助能力。用户可在任意约定阶段接收产物并使用剪映继续制作。
 
-## 建议阅读顺序
+## 开始使用
+
+```powershell
+./environment/install.ps1 -Dev
+./.venv/Scripts/python.exe -m avstudio --help
+./.venv/Scripts/python.exe -m pytest -q
+```
+
+已实现项目建立、文案任务书、图片登记与检查、分镜 CSV、蒙版图层、连续运镜与分层视差、增量渲染、实际音频时间轴导入、无字幕直切粗剪及可移交素材包。图像创作由 AI 按 Skill 执行，本地程序不自动完成文案理解或调用计费图像服务。
+
+优先阅读 [使用指南](docs/USAGE.md) 与 [实现和验收报告](docs/reports/IMPLEMENTATION.md)。项目技能位于 [.agents/skills/video-production](.agents/skills/video-production/SKILL.md)。
+
+## 方案与规范
 
 1. [总体方案](docs/PROPOSAL.md)：目标、范围、协作方式和待评审决策。
 2. [分阶段计划](ROADMAP.md)：先后顺序、交付和验收条件。
 3. [制作流程](docs/WORKFLOW.md)：每一步怎么做、问什么、交付什么。
 4. [工程与数据设计](docs/DESIGN.md)：工具边界、素材关联和可移交机制。
 5. [项目背景与已有成果](docs/CONTEXT.md)：承接已有工作，区分事实与待验证项。
-6. [修订 Skill 草案](planning/skills/video-production/SKILL.md)：可供不同 AI 阅读的流程入口。
+6. [可执行 Skill](.agents/skills/video-production/SKILL.md)：可供不同 AI 阅读的流程入口；planning 中保留早期草案。
 
-## 当前交付范围
+## 当前边界
 
-本次仅创建规划文档、Skill 草案、模板及原始参考归档。未安装依赖，未编写或执行制作程序，未接入 API/MCP，未生成图片或视频，未修改软件配置。Skill 放在 `planning/skills/`，尚未安装到工具的技能发现目录。
+本地已建立独立 Python 环境，复用现有 FFmpeg。测试只使用程序生成素材与测试音频，没有制作正式作品或修改旧视频。VoiceStudio API/MCP、自动 ASR、复杂人物动画、自动背景补绘、复杂转场/混音和剪映实际导入尚未实现或验收；可手工接续。
 
 V2.0 原始压缩包和解包内容保存在 [参考目录](docs/references/SOURCE_INDEX.md)。旧视频保留在下载文件夹，本次未复制大型视频，也未返工。
 
-下一步是评审方案，通过后仅启动约定的阶段。
+下一步适合用一小段新文案进行真正的分镜、美术样张和用户审阅，验证创作效果；技术演示不能替代美术验收。

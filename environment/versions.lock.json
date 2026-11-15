@@ -1,0 +1,11 @@
+{
+  "verified_date": "2026-11-15",
+  "platform": "Windows x64",
+  "python": "3.11.9",
+  "pillow": "13.0.0",
+  "pytest": "9.2.0",
+  "ffmpeg": "7.1.1-full_build-www.gyan.dev",
+  "ffprobe": "7.1.1-full_build-www.gyan.dev",
+  "git": "2.49.0.rc1.windows.1",
+  "note": "记录本机验证基线，不是安装系统软件的指令。Python 依赖精确版本见 requirements.lock.txt。"
+}

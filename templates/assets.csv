@@ -1,1 +1,1 @@
-asset_id,relative_path,asset_type,source,reference_ids,prompt_record,width,height,layer_group,shot_ids,selection_status,check_result,usage_terms,issues,version
+asset_id,path,source,usage_terms,width,height,mode,sha256,visual_check

@@ -5,6 +5,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 *.egg-info/
 build/
 dist/
@@ -19,6 +22,12 @@ projects/
 library/
 cache/
 logs/
+*.log
+*.tmp
+
+# Reproducible local test results and machine-specific environment snapshots
+/docs/reports/*.xml
+/docs/reports/*.json
 
 # Local editor and OS files
 .idea/

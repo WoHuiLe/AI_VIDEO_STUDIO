@@ -1,0 +1,11 @@
+# Verified on Windows x64 / Python 3.11.9. No private index or local paths.
+Pillow==13.0.0
+pytest==9.2.0
+colorama==0.4.6
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.7.0
+Pygments==2.21.0
+setuptools==84.2.1
+wheel==0.48.0
+PyYAML==6.0.3
