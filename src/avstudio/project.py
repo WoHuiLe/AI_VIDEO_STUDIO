@@ -119,6 +119,7 @@ def attach_audio(root: Path, source: Path) -> None:
     data = load_project(root)
     relative = f"input/narration_{digest}{source.suffix.lower()}"
     target = local(root, relative)
+    target.parent.mkdir(parents=True, exist_ok=True)
     if not target.exists():
         shutil.copyfile(source, target)
     data.update(narration=relative, narration_sha256=digest)

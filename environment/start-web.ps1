@@ -7,7 +7,7 @@ if (-not (Test-Path -LiteralPath $studioPython)) { throw '请先运行 environme
 $studioRunning = $false
 try {
     $studioConfig = Invoke-RestMethod -Uri ($studioUrl + '/api/config') -TimeoutSec 2
-    $studioRunning = $studioConfig.service -eq 'avstudio-desk'
+    $studioRunning = $studioConfig.service -eq 'avstudio-desk' -and $studioConfig.workspace -eq $studioRoot
 } catch { }
 if (-not $studioRunning) {
     if (Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue) { throw '8765 端口被其他程序占用，请人工检查；不会终止已有程序。' }

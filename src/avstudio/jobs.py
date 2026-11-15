@@ -14,7 +14,13 @@ class Jobs:
         self.cancelled = {}
         self.thread = None
         self.stopping = threading.Event()
-        for root in desk.projects.iterdir():
+        self.recovered = False
+
+    def recover(self):
+        if self.recovered:
+            return
+        self.recovered = True
+        for root in self.desk.projects.iterdir():
             if root.name.startswith(".") or root.is_symlink():
                 continue
             for path in (root / "work/jobs").glob("*.json"):

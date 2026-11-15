@@ -14,14 +14,15 @@ from .media import executable, inspect_media, probe, run
 from .project import require_valid
 from .storage import StudioError, event, local, read_json, sha256, write_json
 
-RENDER_VERSION = "1"
+RENDER_VERSION = "2"
 
 
 def geometry(data: dict, preview: bool) -> tuple[int, int]:
     width, height = data["width"], data["height"]
-    if preview and width > 640:
-        height = max(2, round(height * 640 / width / 2) * 2)
-        width = 640
+    if preview and max(width, height) > 640:
+        ratio = 640 / max(width, height)
+        width = max(2, round(width * ratio / 2) * 2)
+        height = max(2, round(height * ratio / 2) * 2)
     return width, height
 
 
@@ -47,15 +48,19 @@ def frame(layers: list, spec: list, size: tuple, progress: float) -> Image.Image
     canvas = Image.new("RGBA", size, (0, 0, 0, 0))
     for image, layer in zip(layers, spec):
         x, y, scale = [a + (b - a) * ease for a, b in zip(layer["start"], layer["end"])]
-        inverse = (1 / scale, 0, width / 2 - width / (2 * scale) - x * width / scale,
-                   0, 1 / scale, height / 2 - height / (2 * scale) - y * height / scale)
+        inverse = (image.width / width / scale, 0,
+                   image.width / 2 - image.width / (2 * scale) - x * image.width / scale,
+                   0, image.height / height / scale,
+                   image.height / 2 - image.height / (2 * scale) - y * image.height / scale)
         moved = image.transform(size, Image.Transform.AFFINE, inverse,
                                 resample=Image.Resampling.BICUBIC)
         canvas = Image.alpha_composite(canvas, moved)
     return canvas.convert("RGB")
 
 
-def render_shot(root: Path, data: dict, shot: dict, preview=False) -> dict:
+def render_shot(root: Path, data: dict, shot: dict, preview=False, cancelled=None) -> dict:
+    if cancelled is not None and cancelled.is_set():
+        raise StudioError("任务已取消")
     key = signature(data, shot, preview)
     folder = local(root, "work/previews" if preview else "work/shots")
     folder.mkdir(parents=True, exist_ok=True)
@@ -70,8 +75,15 @@ def render_shot(root: Path, data: dict, shot: dict, preview=False) -> dict:
     for spec in shot["layers"]:
         asset = data["assets"][spec["asset_id"]]
         with Image.open(local(root, asset["path"])) as original:
-            layers.append(ImageOps.fit(ImageOps.exif_transpose(original).convert("RGBA"),
-                                       size, method=Image.Resampling.LANCZOS))
+            oriented = ImageOps.exif_transpose(original).convert("RGBA")
+            # Crop to shared aspect at source resolution. Sample directly from
+            # original detail instead of shrinking then magnifying every frame.
+            ratio = size[0] / size[1]
+            if oriented.width / oriented.height > ratio:
+                master = (max(1, round(oriented.height * ratio)), oriented.height)
+            else:
+                master = (oriented.width, max(1, round(oriented.width / ratio)))
+            layers.append(ImageOps.fit(oriented, master, method=Image.Resampling.LANCZOS))
     if layers[0].getchannel("A").getextrema()[0] != 255:
         raise StudioError(f"{shot['shot_id']} 底层背景必须不透明并已补齐")
     frames = frame_count(shot["duration_s"], data["fps"])
@@ -90,6 +102,8 @@ def render_shot(root: Path, data: dict, shot: dict, preview=False) -> dict:
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=error_log)
             try:
                 for index in range(frames):
+                    if cancelled is not None and cancelled.is_set():
+                        raise StudioError("任务已取消")
                     image = frame(layers, shot["layers"], size, index / max(1, frames - 1))
                     proc.stdin.write(image.tobytes())
                 proc.stdin.close()
@@ -175,7 +189,7 @@ def assemble(root: Path, preview=False) -> dict:
     key = hashlib.sha256(json.dumps({"renders": [sha256(p) for p in paths],
                                     "audio": data.get("narration_sha256")}, sort_keys=True).encode()).hexdigest()[:16]
     output = output_folder / f"{'preview' if preview else 'roughcut'}_{key}.mp4"
-    fd, temp_name = tempfile.mkstemp(dir=output_folder, suffix=".mp4")
+    fd, temp_name = tempfile.mkstemp(dir=output_folder, prefix=".writing-", suffix=".mp4")
     os.close(fd)
     temp = Path(temp_name)
     try:

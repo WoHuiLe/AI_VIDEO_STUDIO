@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .project import export_assets, export_storyboard, require_valid
 from .render import current_render
-from .storage import StudioError, atomic_text, event, local, sha256
+from .storage import StudioError, atomic_text, event, local, read_json, sha256
 
 
 def package(root: Path, include_renders=False) -> Path:
@@ -27,6 +27,19 @@ def package(root: Path, include_renders=False) -> Path:
             files.add(path)
     for path in (root / "planning").glob("storyboard_*.md"):
         files.add(local(root, path.relative_to(root).as_posix()))
+    overrides = {}
+    submission_file = local(root, "planning/submission.json")
+    if submission_file.exists():
+        snapshot = read_json(submission_file)
+        snapshot["active_job"] = None
+        if snapshot.get("status") == "working":
+            snapshot["status"] = "review"
+        overrides["planning/submission.json"] = (json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        for record in snapshot.get("files", []):
+            source = local(root, record["path"])
+            if not source.is_file():
+                raise StudioError("交接资料缺失：" + record.get("name", record["path"]))
+            files.add(source)
     for asset in data["assets"].values():
         files.add(local(root, asset["path"]))
     if data.get("narration"):
@@ -37,8 +50,13 @@ def package(root: Path, include_renders=False) -> Path:
                 raise StudioError("镜头包存在未审核镜头")
             video = current_render(root, data, shot)
             files.update([video, video.with_suffix(".json")])
-    manifest = [{"path": p.relative_to(root.resolve()).as_posix(), "sha256": sha256(p),
-                 "bytes": p.stat().st_size} for p in sorted(files)]
+    manifest = []
+    for path in sorted(files):
+        relative = path.relative_to(root.resolve()).as_posix()
+        payload = overrides.get(relative)
+        manifest.append({"path": relative,
+                         "sha256": __import__("hashlib").sha256(payload).hexdigest() if payload is not None else sha256(path),
+                         "bytes": len(payload) if payload is not None else path.stat().st_size})
     # Hash every included byte, including handoff notes, not just video parameters.
     digest = __import__("hashlib").sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()[:16]
     output = local(root, f"output/handoff_{digest}.zip")
@@ -51,13 +69,16 @@ def package(root: Path, include_renders=False) -> Path:
              "没有实际录音校准时，时长只是剪辑参考。\n"
              "视觉一致性、叙事和听音验收以用户/审核者记录为准，技术通过不能替代。\n"
              "本包不修改剪映草稿，不包含软件、模型、密钥或系统配置。\n")
-    fd, temp_name = tempfile.mkstemp(dir=output.parent, suffix=".zip")
+    fd, temp_name = tempfile.mkstemp(dir=output.parent, prefix=".writing-", suffix=".zip")
     os.close(fd)
     temp = Path(temp_name)
     try:
         with zipfile.ZipFile(temp, "w", zipfile.ZIP_DEFLATED) as archive:
             for path, entry in zip(sorted(files), manifest):
-                archive.write(path, entry["path"])
+                if entry["path"] in overrides:
+                    archive.writestr(entry["path"], overrides[entry["path"]])
+                else:
+                    archive.write(path, entry["path"])
             archive.writestr("PACKAGE_MANIFEST.json", json.dumps(manifest, ensure_ascii=False, indent=2))
             archive.writestr("HANDOFF.md", notes)
         with zipfile.ZipFile(temp) as archive:

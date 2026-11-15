@@ -8,6 +8,8 @@ let token = "", selectedReferences = [], selectedNarration = null, activeProject
 let requestId = crypto.randomUUID().replaceAll("-", ""), feedbackRequestId = crypto.randomUUID().replaceAll("-", "");
 let toastTimer;
 let detailSignature = "";
+const responseCache = new Map();
+const detailOpenStates = new Map();
 
 function el(tag, text, className) {
   const node = document.createElement(tag);
@@ -27,9 +29,14 @@ function toast(message) {
   toastTimer = setTimeout(() => { $("toast").hidden = true; }, 4000);
 }
 async function api(path, options = {}) {
-  const response = await fetch(path, {...options, headers: {"X-Studio-Token": token, ...options.headers}});
+  const cached = !options.method && path.startsWith('/api/projects') ? responseCache.get(path) : null;
+  const headers = {"X-Studio-Token": token, ...options.headers};
+  if (cached) headers['If-None-Match'] = cached.etag;
+  const response = await fetch(path, {...options, headers});
+  if (response.status === 304 && cached) return cached.data;
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || "保存失败，请稍后重试");
+  if (!options.method && response.headers.get('ETag')) responseCache.set(path,{etag:response.headers.get('ETag'),data:result});
   return result;
 }
 function fileURL(id, path, download = false) {
@@ -39,7 +46,7 @@ function saveDraft() {
   $("character-count").textContent = `${$("script").value.length.toLocaleString()} 字`;
   try {
     const data = Object.fromEntries(new FormData($("project-form")));
-    localStorage.setItem(draftKey, JSON.stringify({...data, request_id: requestId}));
+    localStorage.setItem(draftKey, JSON.stringify({...data, request_id: requestId, start_now_checked: $('start-now').checked}));
     $("draft-state").textContent = "文字已在本机暂存";
   } catch { $("draft-state").textContent = "请保留页面，当前无法暂存"; }
 }
@@ -107,17 +114,28 @@ function section(title, content) {
   const box = el("section", undefined, "detail-section"); box.append(el("h3", title), content); return box;
 }
 function renderDetail(project) {
+  if (activeProject && activeProject !== project.id) return;
   const signature = JSON.stringify(project);
   if (signature === detailSignature) return;
   detailSignature = signature;
   $("detail-title").textContent = project.title;
-  const content = $("detail-content"); content.replaceChildren();
+  const content = $("detail-content");
+  const previousId = content.dataset.projectId;
+  const opened = new Set(detailOpenStates.get(project.id) || []);
+  if (previousId === project.id) {
+    for(const detail of content.querySelectorAll('details[data-state-key]')) {
+      if(detail.open) opened.add(detail.dataset.stateKey); else opened.delete(detail.dataset.stateKey);
+    }
+    detailOpenStates.set(project.id, opened);
+  }
+  const scrollTop = $('project-dialog').scrollTop;
+  content.replaceChildren(); content.dataset.projectId = project.id;
   const meta = el("div", undefined, "detail-meta");
   meta.append(el("span", statusNames[project.status] || "待处理", `badge ${project.status}`), el("span", `${scopeNames[project.brief.scope]} · ${project.brief.ratio} · ${project.brief.style}`), el("span", date(project.created_at)));
   content.append(meta);
   content.append(buildWorkflow(project));
   const approveOption = $("feedback-decision").querySelector('option[value="approve"]');
-  approveOption.disabled = !project.workflow?.has_plan;
+  approveOption.disabled = true;
   if (approveOption.disabled && $("feedback-decision").value === "approve") $("feedback-decision").value = "note";
   $("feedback-form").querySelector('h3').textContent = project.workflow?.has_plan ? "补充资料与修改意见" : "补充资料（首次提交无需填写）";
   content.append(section("文案", el("div", project.script, "detail-text")));
@@ -138,6 +156,7 @@ function renderDetail(project) {
       if (/\.mp4$/i.test(file.path)) { const video = el("video"); video.src = fileURL(project.id, file.path); video.controls = true; video.preload = "metadata"; card.append(video); }
       if (/\.(md|csv|srt)$/i.test(file.path) && file.bytes <= 1024 * 1024) {
         const details = el("details", undefined, "document-preview");
+        details.dataset.stateKey = `document-${file.path}`;
         details.append(el("summary", "展开查看内容"));
         const text = el("pre", "正在读取……"); details.append(text);
         let loaded = false;
@@ -162,6 +181,10 @@ function renderDetail(project) {
     }
     content.append(section("你的反馈记录", history));
   }
+  if (previousId === project.id) {
+    for (const detail of content.querySelectorAll('details[data-state-key]')) if(opened.has(detail.dataset.stateKey)) detail.open=true;
+    $('project-dialog').scrollTop = scrollTop;
+  }
 }
 async function openProject(id) {
   try {
@@ -170,6 +193,7 @@ async function openProject(id) {
     $("feedback-form").reset(); $("feedback-message").textContent = ""; $("feedback-files-label").textContent = "";
     feedbackRequestId = crypto.randomUUID().replaceAll("-", "");
     try { const draft = JSON.parse(localStorage.getItem(`avstudio-feedback-${id}`) || "null"); if (draft) { $("feedback-note").value = draft.note || ""; $("feedback-stage").value = draft.stage || "general"; $("feedback-decision").value = draft.decision || "note"; } } catch { /* optional draft */ }
+    if ($('feedback-decision').value === 'approve') $('feedback-decision').value = 'note';
     if (!$("project-dialog").open) $("project-dialog").showModal();
   } catch (error) { toast(error.message); }
 }
@@ -240,7 +264,7 @@ $("feedback-form").addEventListener("submit", async event => {
 restoreDraft();
 function updateSubmitLabel(){ $("submit-button").textContent = $("start-now").checked ? "提交并开始分镜" : "保存制作资料"; }
 $("start-now").addEventListener('change',updateSubmitLabel);
-api("/api/config").then(config => { token = config.csrf_token; $("start-now").checked = Boolean(config.executor?.available); updateSubmitLabel(); $("executor-message").textContent = config.executor?.available ? '使用本机已登录 Codex 的额度；也可取消勾选，仅保存资料。' : '可先保存资料，登录本机 Codex 后开始，或导入其他 AI 的分镜。'; return loadProjects(); }).catch(error => { $("form-message").textContent = `本地服务暂时无法连接：${error.message}`; $("project-list").replaceChildren(el("p", "无法读取作品，请刷新重试。", "empty-copy")); });
+api("/api/config").then(config => { token = config.csrf_token; let preference; try{preference=JSON.parse(localStorage.getItem(draftKey)||'null')?.start_now_checked;}catch{} $("start-now").checked = typeof preference === 'boolean' ? preference : Boolean(config.executor?.available); updateSubmitLabel(); $("executor-message").textContent = config.executor?.available ? '使用本机已登录 Codex 的额度；也可取消勾选，仅保存资料。' : '可先保存资料，登录本机 Codex 后开始，或导入其他 AI 的分镜。'; return loadProjects(); }).catch(error => { $("form-message").textContent = `本地服务暂时无法连接：${error.message}`; $("project-list").replaceChildren(el("p", "无法读取作品，请刷新重试。", "empty-copy")); });
 setInterval(() => {
   if (document.visibilityState !== "visible" || !token) return;
   loadProjects().catch(() => {});

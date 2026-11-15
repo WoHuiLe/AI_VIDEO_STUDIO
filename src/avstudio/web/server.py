@@ -232,6 +232,8 @@ class Desk:
         outputs = []
         for folder in ["output", "planning"]:
             for path in sorted(local(root, folder).glob("*")):
+                if path.name.startswith("."):
+                    continue
                 if path.is_file() and path.suffix.lower() in {".mp4", ".png", ".jpg", ".jpeg", ".webp", ".zip", ".csv", ".md", ".srt"}:
                     if folder == "planning" and path.name in {"brief.md", "handoff.md", "visual_task.md"}:
                         continue
@@ -274,8 +276,11 @@ class Desk:
                 if stage == "storyboard": self.production.plan(root)
                 else: self.production.ensure_art(root)
             stage_root = Path(temp) / "project"
-            # Only files relevant to input changes are needed; preserve the original project separately.
-            shutil.copytree(root, stage_root, symlinks=True, ignore=shutil.ignore_patterns("work", "output"))
+            # Stage only manifests, not all existing media for each feedback note.
+            for relative in ["project.json", "planning/submission.json", "planning/feedback.json"]:
+                target = local(stage_root, relative)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(local(root, relative), target)
             records = self.attach_files(stage_root, files)
             feedback = read_json(local(stage_root, "planning/feedback.json"))
             feedback.append({"id": uuid4().hex, "at": now(), "note": note,
@@ -283,6 +288,13 @@ class Desk:
             submission = read_json(local(stage_root, "planning/submission.json"))
             submission["files"].extend(records)
             submission.update(status="feedback", updated_at=now())
+            if decision == "changes":
+                approvals = submission.get("approvals", {})
+                approvals.pop("artwork", None)
+                if stage == "storyboard":
+                    approvals.pop("storyboard", None)
+                    submission.update(needs_revision=True, current_stage="storyboard")
+                submission["approvals"] = approvals
             # All validation succeeded; immutable upload paths can now be copied in.
             for record in records:
                 target = local(root, record["path"])
@@ -308,6 +320,9 @@ class Desk:
         elif action in {"approve_storyboard", "approve_artwork"}:
             with self.lock:
                 self.production.approve(root, action.removeprefix("approve_"))
+        elif action == "remove_foreground":
+            with self.lock:
+                self.production.unbind(root, fields.get("shot_id"), fields.get("asset_id"))
         else:
             raise StudioError("未知操作")
         return self.detail(project_id)
@@ -357,6 +372,7 @@ class DeskServer(ThreadingHTTPServer):
             raise StudioError("网页只允许在本机 127.0.0.1 运行")
         self.desk = desk
         super().__init__(address, Handler)
+        self.desk.jobs.recover()
 
     def server_close(self):
         self.desk.jobs.close()
@@ -389,7 +405,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def json(self, data, status=200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        etag = None
+        if self.command == "GET" and self.path.startswith("/api/projects") and status == 200:
+            import hashlib
+            etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+            if self.headers.get("If-None-Match") == etag:
+                self.headers_for("application/json; charset=utf-8", 0, 304)
+                self.send_header("ETag", etag)
+                self.end_headers()
+                return
         self.headers_for("application/json; charset=utf-8", len(body), status)
+        if etag:
+            self.send_header("ETag", etag)
         self.end_headers()
         self.wfile.write(body)
 
@@ -402,7 +429,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/config":
                 from ..planner import capability
                 return self.json({"service": "avstudio-desk", "csrf_token": self.server.desk.token,
-                                  "max_upload_bytes": MAX_BODY, "executor": capability()})
+                                  "max_upload_bytes": MAX_BODY, "executor": capability(),
+                                  "workspace": str(self.server.desk.workspace),
+                                  "version": __import__('avstudio').__version__})
             if path == "/api/plan-schema":
                 from ..planner import PLAN_SCHEMA
                 return self.json(PLAN_SCHEMA)
@@ -515,11 +544,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(workspace: Path, port=8765):
-    server = DeskServer(("127.0.0.1", port), Desk(workspace))
-    print(f"AI Video Studio: http://127.0.0.1:{server.server_address[1]}", flush=True)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+    from ..runtime import WorkspaceLease
+    with WorkspaceLease(workspace):
+        server = DeskServer(("127.0.0.1", port), Desk(workspace))
+        print(f"AI Video Studio: http://127.0.0.1:{server.server_address[1]}", flush=True)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.server_close()

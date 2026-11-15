@@ -1,5 +1,6 @@
 import copy
 import io
+import json
 import threading
 import time
 import zipfile
@@ -107,6 +108,22 @@ def test_layer_scope_cannot_claim_flat_image_is_layered(web):
     assert status == 400 and "分层" in result["error"]
 
 
+def test_web_roughcut_with_real_audio_and_confirmed_timings(web,tmp_path):
+    from test_media_integration import tone
+    item=start(web,scope="roughcut")
+    action(web,item,"approve_storyboard");upload(web,item)
+    audio=tmp_path/"narration.wav";tone(audio,seconds=0.25)
+    assert request(web,f"/api/projects/{item['id']}/feedback",{"note":"加入测试旁白"},[("narration","narration.wav",audio.read_bytes())])[0]==200
+    action(web,item,"approve_artwork")
+    assert action(web,item,"deliver")[0]==400
+    times=json.dumps([{"shot_id":"S001","start_s":0,"end_s":0.25}])
+    assert request(web,f"/api/projects/{item['id']}/timeline",{"timings":times,"confirmed":"1"})[0]==200
+    assert action(web,item,"deliver")[0]==200
+    done=await_idle(web,item["id"])
+    assert done["status"]=="complete"
+    assert any(file["name"].startswith("roughcut_") and file["name"].endswith(".mp4") for file in done["outputs"])
+
+
 def test_initial_approval_and_invalid_layer_are_rejected(web):
     import json
     item=json.loads(request(web,"/api/projects",brief())[2])
@@ -161,6 +178,7 @@ def test_restart_recovers_running_job(tmp_path):
     write_json(root/"work/jobs/abc.json",job)
     meta=read_json(root/"planning/submission.json");meta.update(active_job="abc",status="working");write_json(root/"planning/submission.json",meta)
     restored=Desk(tmp_path,planner=fixture_planner)
+    restored.jobs.recover()
     assert restored.detail(item["id"])["status"] == "error"
     assert read_json(root/"work/jobs/abc.json")["status"] == "interrupted"
 

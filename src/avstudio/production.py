@@ -12,7 +12,7 @@ from .delivery import package
 from .planner import plan_with_codex, validate_plan
 from .project import export_storyboard, image_info, register_asset, require_valid
 from .render import assemble, current_render, render_shot
-from .storage import StudioError, atomic_text, load_project, local, read_json, write_json
+from .storage import StudioError, atomic_text, load_project, local, read_json, sha256, write_json
 
 
 def digest(value):
@@ -85,13 +85,15 @@ class Production:
         atomic_text(root / "planning/style.md", "# 美术设定\n\n" + plan["visual_style"] + "\n\n" + plan["character_notes"])
         export_storyboard(root)
         self.update(root, status="review", current_stage="storyboard", review_stage="storyboard",
-                    approvals={}, error=None, plan_revision=revision)
+                    approvals={}, error=None, plan_revision=revision, needs_revision=False)
 
     def approve(self, root, stage):
         self.idle(root)
         meta = self.meta(root)
         approvals = meta.get("approvals", {})
         if stage == "storyboard":
+            if meta.get("needs_revision"):
+                raise StudioError("已提出分镜修改，请先重新设计或导入新版分镜后再确认")
             approvals[stage] = digest(self.plan(root))
             self.update(root, approvals=approvals, status="awaiting_assets", current_stage="artwork",
                         review_stage="artwork", error=None)
@@ -139,7 +141,7 @@ class Production:
             asset = data["assets"][aid]
             if (info["width"], info["height"]) != (asset["width"], asset["height"]):
                 raise StudioError("同一镜头的背景和透明前景必须使用相同画布尺寸")
-        asset = register_asset(root, source, f"ART_{shot_id}_{digest(source.read_bytes().hex())[:10]}", "网页镜头素材")
+        asset = register_asset(root, source, f"ART_{shot_id}_{sha256(source)[:10]}", "网页镜头素材")
         if role == "background":
             entry["background"] = asset["asset_id"]
         elif asset["asset_id"] not in entry["foregrounds"]:
@@ -150,6 +152,19 @@ class Production:
         approvals = meta.get("approvals", {})
         approvals.pop("artwork", None)
         self.update(root, status="awaiting_assets", current_stage="artwork", approvals=approvals, error=None)
+
+    def unbind(self, root, shot_id, asset_id):
+        self.idle(root)
+        mapping = self.mapping(root)
+        entry = mapping.get(shot_id)
+        if not entry or asset_id not in entry.get("foregrounds", []):
+            raise StudioError("找不到这个前景图层")
+        entry["foregrounds"].remove(asset_id)
+        write_json(root / "planning/shot_assets.json", mapping)
+        self.rebuild(root)
+        approvals = self.meta(root).get("approvals", {})
+        approvals.pop("artwork", None)
+        self.update(root, status="awaiting_assets", current_stage="artwork", approvals=approvals)
 
     def rebuild(self, root):
         data = require_valid(root)
@@ -216,20 +231,22 @@ class Production:
             for index, shot in enumerate(data["shots"], 1):
                 if cancelled.is_set(): raise StudioError("任务已取消")
                 progress(f"正在渲染 {shot['shot_id']}（{index}/{len(data['shots'])}）；未变化镜头会复用缓存")
-                receipt = render_shot(root, data, shot, preview)
+                receipt = render_shot(root, data, shot, preview, cancelled=cancelled)
                 source = local(root, receipt["output"])
                 target = root / "output" / source.name
                 if not target.exists(): shutil.copyfile(source, target)
         if cancelled.is_set(): raise StudioError("任务已取消")
-        with self.desk.lock:
-            if preview:
+        if preview:
+            with self.desk.lock:
                 self.update(root, status="review", current_stage="artwork", review_stage="artwork")
-                return
-            if data["scope"] == "roughcut":
-                progress("正在合成无字幕粗剪并完整解码检查")
-                assemble(root)
-            progress("正在整理交接包、清单与校验文件")
-            output = package(root, include_renders=data["scope"] in {"shots", "roughcut"})
+            return
+        # Media work must not hold the global web lock or block progress reads.
+        if data["scope"] == "roughcut":
+            progress("正在合成无字幕粗剪并完整解码检查")
+            assemble(root)
+        progress("正在整理交接包、清单与校验文件")
+        output = package(root, include_renders=data["scope"] in {"shots", "roughcut"})
+        with self.desk.lock:
             self.update(root, status="complete", current_stage="delivery", delivery_file=output.relative_to(root).as_posix())
 
     def view(self, root):
@@ -250,4 +267,5 @@ class Production:
         return {"stage": meta.get("current_stage", "storyboard"), "shots": shots, "jobs": jobs,
                 "approvals": meta.get("approvals", {}), "has_audio": bool(data.get("narration")),
                 "audio_path": data.get("narration"), "error": meta.get("error"),
-                "has_plan": plan is not None, "ready_count": sum(bool(s["background"]) for s in shots)}
+                "has_plan": plan is not None, "ready_count": sum(bool(s["background"]) for s in shots),
+                "needs_revision": meta.get("needs_revision", False), "target_size": [data["width"], data["height"]]}
