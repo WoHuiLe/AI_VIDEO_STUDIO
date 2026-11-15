@@ -1,0 +1,3 @@
+﻿shot_id,start,end,transcript,narrative_purpose,visual_description,shot_type,camera_angle,camera_motion,subject_action,environment_motion,transition_in,transition_out,asset_id,sync_anchor,review_status,notes
+S001,0.0,5.0,示例独白,建立情境,窗边桌面上的信封与暖光,特写,平视,缓慢推进,光线落在信封上,窗帘轻微摆动,淡入,声音先行,A001,关键词/动作点,待审核,
+S002,5.0,10.0,示例独白,引入人物,人物坐在窗边准备打开信件,中景,侧面,固定机位,手伸向信封,灰尘光点轻微漂浮,动作匹配,柔和切换,A002,关键词/动作点,待审核,

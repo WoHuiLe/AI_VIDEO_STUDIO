@@ -1,0 +1,3 @@
+﻿asset_id,file_name,asset_type,scene,character_reference,resolution,aspect_ratio,layers_available,quality_status,usage_shots,license_or_source,notes
+A001,example_background.png,background,窗边,CHAR_A,2048x1152,16:9,background,待检查,S001,AI生成/用户提供,
+A002,example_scene.png,scene_image,人物读信,CHAR_A+CHAR_B,2048x1152,16:9,full_image,待检查,S002,AI生成/用户提供,
