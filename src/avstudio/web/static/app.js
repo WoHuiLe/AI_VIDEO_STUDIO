@@ -264,7 +264,7 @@ $("feedback-form").addEventListener("submit", async event => {
 restoreDraft();
 function updateSubmitLabel(){ $("submit-button").textContent = $("start-now").checked ? "提交并开始分镜" : "保存制作资料"; }
 $("start-now").addEventListener('change',updateSubmitLabel);
-api("/api/config").then(config => { token = config.csrf_token; let preference; try{preference=JSON.parse(localStorage.getItem(draftKey)||'null')?.start_now_checked;}catch{} $("start-now").checked = typeof preference === 'boolean' ? preference : Boolean(config.executor?.available); updateSubmitLabel(); $("executor-message").textContent = config.executor?.available ? '使用本机已登录 Codex 的额度；也可取消勾选，仅保存资料。' : '可先保存资料，登录本机 Codex 后开始，或导入其他 AI 的分镜。'; return loadProjects(); }).catch(error => { $("form-message").textContent = `本地服务暂时无法连接：${error.message}`; $("project-list").replaceChildren(el("p", "无法读取作品，请刷新重试。", "empty-copy")); });
+api("/api/config").then(config => { token = config.csrf_token; let preference; try{preference=JSON.parse(localStorage.getItem(draftKey)||'null')?.start_now_checked;}catch{} $("start-now").checked = typeof preference === 'boolean' ? preference : false; updateSubmitLabel(); $("executor-message").textContent = config.executor?.available ? '使用本机已登录 Codex 的额度；也可取消勾选，仅保存资料。' : '可先保存资料，登录本机 Codex 后开始，或导入其他 AI 的分镜。'; return loadProjects(); }).catch(error => { $("form-message").textContent = `本地服务暂时无法连接：${error.message}`; $("project-list").replaceChildren(el("p", "无法读取作品，请刷新重试。", "empty-copy")); });
 setInterval(() => {
   if (document.visibilityState !== "visible" || !token) return;
   loadProjects().catch(() => {});

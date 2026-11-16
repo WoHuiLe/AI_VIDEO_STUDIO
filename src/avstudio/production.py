@@ -72,16 +72,13 @@ class Production:
         lines = [f"# {data['title']} · 导演分镜\n", "状态：待审核；所有时长均为临时剪辑参考，尚未按旁白校准。\n",
                  "## 内容理解\n" + plan["summary"], "## 美术方向\n" + plan["visual_style"],
                  "## 角色与连续性\n" + plan["character_notes"]]
-        prompts = [f"# {data['title']} · 逐镜头配图任务\n",
-                   "可在当前可用图像工具或 ChatGPT 网页端执行，再上传图片到对应镜头。"
-                   "分层镜头需要同画布的干净背景与透明 PNG；本文件不是已经生成的图片。\n"]
         for shot in plan["shots"]:
             lines.append(f"## {shot['shot_id']}\n对应段落：{', '.join(shot['segment_ids'])}\n\n"
                          f"叙事目的：{shot['narrative_purpose']}\n\n画面：{shot['visual_description']}\n\n"
                          f"景别：{shot['shot_size']}；运镜：{shot['motion']}\n\n分层：{shot['layer_plan']}\n")
-            prompts.append(f"## {shot['shot_id']}\n{shot['image_prompt']}\n\n分层要求：{shot['layer_plan']}\n")
         atomic_text(root / f"planning/storyboard_{revision[:12]}.md", "\n\n".join(lines))
-        atomic_text(root / "planning/prompts.md", "\n\n".join(prompts))
+        from .taskpacks import image_task
+        atomic_text(root / "planning/prompts.md", image_task(data, plan))
         atomic_text(root / "planning/style.md", "# 美术设定\n\n" + plan["visual_style"] + "\n\n" + plan["character_notes"])
         export_storyboard(root)
         self.update(root, status="review", current_stage="storyboard", review_stage="storyboard",
@@ -219,8 +216,10 @@ class Production:
                 data = copy.deepcopy(require_valid(root))
                 meta = self.meta(root)
                 feedback = read_json(root / "planning/feedback.json")
+                from .taskpacks import project_brief
+                brief = project_brief(root, data, meta)
             work = root / "work/planner" / meta["active_job"]
-            plan = self.planner(data, meta["brief"], feedback, work, cancelled, progress)
+            plan = self.planner(data, brief, feedback, work, cancelled, progress)
             if cancelled.is_set(): raise StudioError("任务已取消")
             with self.desk.lock:
                 self.adopt(root, plan)

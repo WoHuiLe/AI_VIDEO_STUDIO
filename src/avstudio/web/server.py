@@ -93,6 +93,8 @@ class Desk:
         from ..production import Production
         from ..jobs import Jobs
         self.production = Production(self, planner)
+        from ..batch import FolderImports
+        self.folder_imports = FolderImports(self.production)
         self.jobs = Jobs(self, self.production.execute)
 
     def project(self, project_id):
@@ -328,13 +330,52 @@ class Desk:
         return self.detail(project_id)
 
     def import_plan(self, project_id, fields, files):
-        if len(files) != 1 or files[0]["suffix"] != ".json":
-            raise StudioError("请选择一个分镜 JSON 文件")
+        from ..taskpacks import parse_plan
+        if len(files) > 1 or (files and files[0]["suffix"] != ".json"):
+            raise StudioError("请选择一个分镜 JSON 文件，或直接粘贴结果")
+        if files and fields.get("plan_text", "").strip():
+            raise StudioError("粘贴与文件请选择一种，避免导入错误版本")
+        text = files[0]["bytes"].decode("utf-8-sig") if files else fields.get("plan_text", "")
         root = self.project(project_id)
         with self.lock:
             self.production.idle(root)
-            self.production.adopt(root, json.loads(files[0]["bytes"].decode("utf-8-sig")))
+            from ..planner import validate_plan
+            try:
+                plan = validate_plan(parse_plan(text), load_project(root))
+            except (StudioError, TypeError) as exc:
+                task = self.task_pack(project_id, "storyboard")["text"]
+                return {"valid": False, "error": str(exc), "repair_task":
+                        "请修正你上次返回的分镜。校验问题：" + str(exc) +
+                        "\n保留有效设计，返回完整 JSON，不只返回修改片段。\n\n" + task}
+            self.production.adopt(root, plan)
         return self.detail(project_id)
+
+    def task_pack(self, project_id, kind):
+        from ..taskpacks import storyboard_task, image_task, project_brief
+        root = self.project(project_id)
+        with self.lock:
+            data = load_project(root)
+            if kind == "storyboard":
+                meta = self.production.meta(root)
+                brief = project_brief(root, data, meta)
+                return {"text": storyboard_task(data, brief, read_json(root / "planning/feedback.json")),
+                        "filename": "storyboard-task.md"}
+            if kind == "images":
+                return {"text": image_task(data, self.production.plan(root)), "filename": "image-batch-task.md"}
+            raise StudioError("未知任务类型")
+
+    def folder_scan(self, project_id, fields, files):
+        if files:
+            raise StudioError("请填写本机文件夹路径")
+        with self.lock:
+            return self.folder_imports.scan(self.project(project_id), fields.get("folder", ""))
+
+    def folder_confirm(self, project_id, fields, files):
+        if files or fields.get("confirmed") != "1":
+            raise StudioError("请先检查扫描预览再确认导入")
+        with self.lock:
+            self.folder_imports.confirm(self.project(project_id), fields.get("scan_id"))
+            return self.detail(project_id)
 
     def shot_asset(self, project_id, fields, files):
         if len(files) != 1 or files[0]["suffix"] not in IMAGE_SUFFIXES:
@@ -444,6 +485,16 @@ class Handler(BaseHTTPRequestHandler):
                 if len(pieces) == 3:
                     with self.server.desk.lock:
                         return self.json(self.server.desk.detail(project_id))
+                if pieces[3] == "task-pack":
+                    return self.json(self.server.desk.task_pack(project_id, parse_qs(parsed.query).get("kind", ["storyboard"])[0]))
+                if pieces[3] == "scan-thumbnail":
+                    query = parse_qs(parsed.query)
+                    with self.server.desk.lock:
+                        content = self.server.desk.folder_imports.thumbnail(self.server.desk.project(project_id),
+                                   query.get("scan_id", [""])[0], int(query.get("index", ["-1"])[0]))
+                    self.headers_for("image/jpeg", len(content))
+                    self.end_headers()
+                    return self.wfile.write(content)
                 if pieces[3] == "file":
                     root = self.server.desk.project(project_id)
                     relative = parse_qs(parsed.query).get("path", [""])[0]
@@ -529,6 +580,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(self.server.desk.feedback(unquote(pieces[2]), fields, files))
             if len(pieces) == 4 and pieces[:2] == ["api", "projects"]:
                 routes = {"actions": self.server.desk.action, "plan-import": self.server.desk.import_plan,
+                          "folder-scan": self.server.desk.folder_scan, "folder-confirm": self.server.desk.folder_confirm,
                           "shot-assets": self.server.desk.shot_asset, "timeline": self.server.desk.timeline}
                 if pieces[3] in routes:
                     return self.json(routes[pieces[3]](unquote(pieces[2]), fields, files))
