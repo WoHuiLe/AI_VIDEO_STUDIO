@@ -12,7 +12,7 @@ from PIL import Image, ImageOps, __version__ as pillow_version
 
 from .media import executable, inspect_media, probe, run
 from .project import require_valid
-from .storage import StudioError, event, local, read_json, sha256, write_json
+from .storage import StudioError, event, local, read_json, sha256, write_json, replace_file
 
 RENDER_VERSION = "2"
 
@@ -126,7 +126,7 @@ def render_shot(root: Path, data: dict, shot: dict, preview=False, cancelled=Non
                     proc.stdin.close()
                 raise
         inspection = inspect_media(temp)
-        os.replace(temp, output)
+        replace_file(temp, output)
         inspection["file"] = output.relative_to(root).as_posix()
         receipt = {"signature": key, "output": output.relative_to(root).as_posix(),
                    "output_sha256": sha256(output), "frames": frames,
@@ -210,7 +210,7 @@ def assemble(root: Path, preview=False) -> dict:
         args += ["-c:v", "copy", "-sn", "-movflags", "+faststart", str(temp)]
         run(args, timeout=3600)
         report = inspect_media(temp)
-        os.replace(temp, output)
+        replace_file(temp, output)
         report["file"] = output.relative_to(root).as_posix()
         result = {"output": report["file"], "timeline": timeline, "inspection": report,
                   "output_sha256": sha256(output),

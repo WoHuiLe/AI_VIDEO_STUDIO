@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import uuid4
 
 from ..project import attach_audio, export_storyboard, init_project, planning_packet, register_asset
-from ..storage import StudioError, atomic_text, identifier, load_project, local, read_json, write_json
+from ..storage import StudioError, atomic_text, identifier, load_project, local, read_json, write_json, read_text_file
 
 MAX_BODY = 100 * 1024 * 1024
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -220,7 +220,8 @@ class Desk:
             try:
                 identifier(root.name)
                 item = read_json(local(root, "planning/submission.json"))
-                results.append({key: item[key] for key in ["id", "title", "created_at", "updated_at", "status", "brief"]})
+                results.append({**{key: item[key] for key in ["id", "title", "created_at", "updated_at", "status", "brief"]},
+                                "last_job_status": item.get("last_job_status")})
             except (OSError, ValueError, KeyError):
                 continue
         return sorted(results, key=lambda s: s["updated_at"], reverse=True)[:100]
@@ -242,12 +243,11 @@ class Desk:
                     if folder == "planning" and path.name in {"brief.md", "handoff.md", "visual_task.md"}:
                         continue
                     if path.suffix.lower() == ".csv":
-                        import csv
-                        with path.open(encoding="utf-8-sig", newline="") as stream:
-                            rows = csv.reader(stream)
-                            next(rows, None)
-                            if next(rows, None) is None:
-                                continue
+                        import csv, io
+                        rows = csv.reader(io.StringIO(read_text_file(path, encoding="utf-8-sig")))
+                        next(rows, None)
+                        if next(rows, None) is None:
+                            continue
                     safe = local(root, path.relative_to(root).as_posix())
                     outputs.append({"name": path.name, "path": safe.relative_to(root).as_posix(),
                                     "bytes": safe.stat().st_size, "modified": safe.stat().st_mtime_ns})
@@ -436,6 +436,74 @@ class Desk:
             self.production.rebuild(root)
             return self.detail(item["id"])
 
+    def manage(self, project_id, fields, files):
+        if files:
+            raise StudioError("作品操作不接收附件")
+        identifier(project_id)
+        operation = fields.get("operation")
+        with self.lock:
+            from ..batch import has_link
+            raw_trash = self.projects / ".trash"
+            if raw_trash.exists() and has_link(raw_trash):
+                raise StudioError("回收站不能是链接目录")
+            trash_root = local(self.projects, ".trash")
+            raw_entry = trash_root / project_id
+            if raw_entry.exists() and has_link(raw_entry):
+                raise StudioError("回收站条目不能是链接")
+            entry = local(trash_root, project_id)
+            if entry.exists() and has_link(entry):
+                raise StudioError("回收站条目不能是链接")
+            archived = local(entry, "project")
+            raw_archive = entry / "project"
+            if raw_archive.exists() and has_link(raw_archive):
+                raise StudioError("回收站作品不能是链接")
+            target = self.projects / project_id
+            if operation == "restore":
+                if not archived.is_dir() or target.exists() or archived.is_symlink():
+                    raise StudioError("无法还原：回收站作品不存在，或同编号作品已存在")
+                if archived.resolve().parent != entry.resolve():
+                    raise StudioError("回收站路径无效")
+                os.replace(archived, target)
+                write_json(entry / "record.json", {"id": project_id, "restored_at": now()})
+                return self.detail(project_id)
+            root = self.project(project_id)
+            self.production.idle(root)
+            if has_link(target) or root != target.resolve():
+                raise StudioError("不操作链接形式的作品")
+            if operation == "rename":
+                title = text_field(fields, "title", 200)
+                if not title:
+                    raise StudioError("作品名称不能为空")
+                data = load_project(root)
+                data["title"] = title
+                write_json(root / "project.json", data)
+                self.production.update(root, title=title)
+                return self.detail(project_id)
+            if operation == "trash":
+                if fields.get("confirmed") != "1":
+                    raise StudioError("请先确认移入回收站")
+                if archived.exists():
+                    raise StudioError("回收站已有同编号作品")
+                entry.mkdir(parents=True, exist_ok=True)
+                record = {"id": project_id, "title": self.production.meta(root)["title"], "deleted_at": now()}
+                write_json(entry / "record.json", record)
+                os.replace(root, archived)
+                return {"trashed": project_id}
+            raise StudioError("未知作品操作")
+
+    def trash_list(self):
+        with self.lock:
+            trash_root = local(self.projects, ".trash")
+            records = []
+            if trash_root.is_dir():
+                for entry in trash_root.iterdir():
+                    if entry.is_symlink() or not entry.is_dir():
+                        continue
+                    identifier(entry.name)
+                    if local(entry, "project/planning/submission.json").is_file():
+                        records.append(read_json(local(entry, "record.json")))
+            return {"projects": sorted(records, key=lambda r:r.get("deleted_at", ""), reverse=True)}
+
     def timeline(self, project_id, fields, files):
         from ..media import import_timeline
         if files:
@@ -525,6 +593,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/projects":
                 with self.server.desk.lock:
                     return self.json({"projects": self.server.desk.summaries()})
+            if path == "/api/trash":
+                return self.json(self.server.desk.trash_list())
             pieces = path.strip("/").split("/")
             if len(pieces) in {3, 4} and pieces[:2] == ["api", "projects"]:
                 project_id = unquote(pieces[2])
@@ -578,7 +648,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not target.is_file():
                         raise FileNotFoundError()
                     return self.send_file(target, download=parse_qs(parsed.query).get("download") == ["1"])
-            static = {"/": "studio.html", "/classic": "index.html", "/studio.js": "studio.js", "/studio.css": "studio.css", "/app.js": "app.js", "/style.css": "style.css", "/documents.css": "documents.css", "/workflow.js": "workflow.js", "/workflow.css": "workflow.css"}.get(path)
+            static = {"/": "studio.html", "/classic": "index.html", "/activity.js": "activity.js", "/studio.js": "studio.js", "/studio.css": "studio.css", "/app.js": "app.js", "/style.css": "style.css", "/documents.css": "documents.css", "/workflow.js": "workflow.js", "/workflow.css": "workflow.css"}.get(path)
             if static:
                 return self.send_file(Path(__file__).parent / "static" / static)
             return self.json({"error": "找不到这个页面"}, 404)
@@ -654,7 +724,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(pieces) == 4 and pieces[:2] == ["api", "projects"] and pieces[3] == "feedback":
                 return self.json(self.server.desk.feedback(unquote(pieces[2]), fields, files))
             if len(pieces) == 4 and pieces[:2] == ["api", "projects"]:
-                routes = {"editor": self.server.desk.edit, "actions": self.server.desk.action, "plan-import": self.server.desk.import_plan,
+                routes = {"manage": self.server.desk.manage, "editor": self.server.desk.edit, "actions": self.server.desk.action, "plan-import": self.server.desk.import_plan,
                           "folder-scan": self.server.desk.folder_scan, "folder-confirm": self.server.desk.folder_confirm,
                           "shot-assets": self.server.desk.shot_asset, "timeline": self.server.desk.timeline}
                 if pieces[3] in routes:

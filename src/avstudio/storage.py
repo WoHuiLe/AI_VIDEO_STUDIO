@@ -30,11 +30,41 @@ def identifier(value: str) -> str:
 
 
 def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    def calculate():
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    return retry_file_io(calculate)
+
+
+def retry_file_io(operation):
+    import time
+    for attempt in range(9):
+        try:
+            return operation()
+        except PermissionError:
+            if os.name != "nt" or attempt == 8:
+                raise
+            time.sleep(min(.01 * 2**attempt, .1))
+
+
+def read_text_file(path, encoding="utf-8"):
+    return retry_file_io(lambda: path.read_text(encoding=encoding))
+
+
+def replace_file(source, target):
+    """Allow short Windows reader/indexer sharing locks to clear, still atomic."""
+    import time
+    for attempt in range(9):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError as exc:
+            if os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 8:
+                raise
+            time.sleep(min(.01 * 2**attempt, .1))
 
 
 def atomic_text(path: Path, content: str) -> None:
@@ -43,14 +73,14 @@ def atomic_text(path: Path, content: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
             stream.write(content)
-        os.replace(name, path)
+        replace_file(name, path)
     finally:
         if os.path.exists(name):
             os.unlink(name)
 
 
 def read_json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    return json.loads(read_text_file(path, encoding="utf-8-sig"))
 
 
 def write_json(path: Path, data) -> None:

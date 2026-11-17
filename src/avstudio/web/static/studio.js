@@ -2,7 +2,12 @@ const $=id=>document.getElementById(id);
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
 let token='',activeProject=null,project=null,projects=[],selected=null,dirty=false,playing=false,clock=0,previousTick=0,libraryTab='projects',drawerMode='workflow',toastTimer,mutating=false;
 const images=new Map(),sceneFrames=new Map();
+let trashedProjects=[], managementTarget=null, managementMode='', libraryFingerprint='';
+
+let observedProject=null, syncProblem='', lastTaskNotice=null, lastProjectSync=0;
+
 const statusNames={queued:'待设计',working:'制作中',review:'待确认',awaiting_assets:'待画面',complete:'已交付',feedback:'有反馈',error:'需处理'};
+function projectStatusName(item){return item.status==='error'&&item.last_job_status==='cancelled'?'已停止':statusNames[item.status]||item.status;}
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4200);}
 async function api(path,options={}){const response=await fetch(path,{...options,headers:{'X-Studio-Token':token,...options.headers}});const data=await response.json();if(!response.ok)throw new Error(data.error||'操作失败');return data;}
 function fileURL(id,path,download=false){return `/api/projects/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}${download?'&download=1':''}`;}
@@ -14,12 +19,12 @@ function current(){return shots().find(s=>s.shot_id===selected);}
 function total(){return shots().reduce((n,s)=>n+s.duration_s,0);}
 function offset(id){let t=0;for(const s of shots()){if(s.shot_id===id)return t;t+=s.duration_s;}return 0;}
 function locate(time){let begin=0;for(const s of shots()){if(time<begin+s.duration_s||s===shots().at(-1))return {shot:s,progress:Math.min(1,Math.max(0,(time-begin)/s.duration_s))};begin+=s.duration_s;}return null;}
-function setStatus(){const job=project?.workflow.jobs.find(j=>j.id===project.active_job);$('status').textContent=job?.message||project?.workflow.error||(project?`${statusNames[project.status]||project.status} · ${project.workflow.ready_count}/${shots().length} 个镜头已有画面 · 无旁白时长为临时参考`:'本机服务已连接');$('cancel-job').hidden=!project?.active_job;$('save-state').textContent=dirty?'有未保存修改':'已保存到本机';$('undo').disabled=!project||(!dirty&&!project.editor.can_undo)||!!project.active_job;$('compare').disabled=!project?.editor.can_undo;$('redo').disabled=!project?.editor.can_redo||dirty||!!project.active_job;}
-async function loadProjects(){projects=(await api('/api/projects')).projects;drawLibrary();}
-function drawLibrary(){const box=$('project-list');box.replaceChildren();$('tab-projects').classList.toggle('selected',libraryTab==='projects');$('tab-assets').classList.toggle('selected',libraryTab==='assets');if(libraryTab==='assets'){if(!project){box.append(el('p','先打开一个作品','muted'));return;}const assets=Object.values(project.assets);for(const asset of assets){const card=el('div',undefined,'asset-tile'),image=el('img');image.src=fileURL(project.id,asset.path);image.alt=asset.asset_id;image.loading='lazy';card.append(image,el('small',`${asset.width} × ${asset.height} · ${asset.asset_id}`));box.append(card);}if(!assets.length)box.append(el('p','尚无导入素材。程序场景不需要图片文件。','muted'));return;}for(const item of projects){const button=el('button',undefined,'project-entry'+(item.id===activeProject?' active':''));button.append(el('strong',item.title),el('small',`${statusNames[item.status]||item.status} · ${item.brief.ratio}`));button.onclick=()=>openProject(item.id).catch(e=>toast(e.message));box.append(button);}if(!projects.length)box.append(el('p','点击新建，放入第一段文案。','muted'));}
+function setStatus(){renderActivity(observedProject?.id===project?.id?observedProject:project);const job=project?.workflow.jobs.find(j=>j.id===project.active_job);$('status').textContent=job?.message||project?.workflow.error||(project?`${statusNames[project.status]||project.status} · ${project.workflow.ready_count}/${shots().length} 个镜头已有画面 · 无旁白时长为临时参考`:'本机服务已连接');$('cancel-job').hidden=!project?.active_job;$('save-state').textContent=dirty?'有未保存修改':'已保存到本机';$('undo').disabled=!project||(!dirty&&!project.editor.can_undo)||!!project.active_job;$('compare').disabled=!project?.editor.can_undo;$('redo').disabled=!project?.editor.can_redo||dirty||!!project.active_job;}
+async function loadProjects(){projects=(await api('/api/projects')).projects;$('all-tasks').textContent=`后台任务 · ${projects.filter(p=>p.status==='working').length}`;drawLibrary();}
+function drawLibrary(){const fingerprint=JSON.stringify([libraryTab,activeProject,projects.map(p=>[p.id,p.title,p.status,p.last_job_status,p.updated_at,p.brief.ratio]),libraryTab==='trash'?trashedProjects:libraryTab==='assets'?project?.assets:null]);if(fingerprint===libraryFingerprint)return;libraryFingerprint=fingerprint;const box=$('project-list');box.replaceChildren();$('tab-projects').classList.toggle('selected',libraryTab==='projects');$('tab-assets').classList.toggle('selected',libraryTab==='assets');$('tab-trash').classList.toggle('selected',libraryTab==='trash');if(libraryTab==='trash'){for(const item of trashedProjects){const row=el('div',undefined,'trash-entry');row.append(el('strong',item.title),el('small','已移入回收站'),plainButton('还原作品',async()=>{await manageProject(item.id,{operation:'restore'});await loadTrash();await loadProjects();toast('作品已还原，可在作品列表打开');}));box.append(row);}if(!trashedProjects.length)box.append(el('p','回收站为空。删除作品会保留文案、素材和历史。','muted'));return;}if(libraryTab==='assets'){if(!project){box.append(el('p','先打开一个作品','muted'));return;}const assets=Object.values(project.assets);for(const asset of assets){const card=el('div',undefined,'asset-tile'),image=el('img');image.src=fileURL(project.id,asset.path);image.alt=asset.asset_id;image.loading='lazy';card.append(image,el('small',`${asset.width} × ${asset.height} · ${asset.asset_id}`));box.append(card);}if(!assets.length)box.append(el('p','尚无导入素材。程序场景不需要图片文件。','muted'));return;}for(const item of projects){const button=el('button',undefined,'project-entry'+(item.id===activeProject?' active':''));button.append(el('strong',item.title),el('small',`${projectStatusName(item)} · ${item.brief.ratio}`));button.onclick=()=>openProject(item.id).catch(e=>toast(e.message));const row=el('div',undefined,'project-row');row.append(button);const more=el('details',undefined,'project-actions');const summary=el('summary','⋯');summary.setAttribute('aria-label',`作品操作：${item.title}`);more.append(summary);const menu=el('div',undefined,'project-popup');for(const [label,op] of [['打开作品','open'],['查看制作状态','status'],['停止当前制作','stop'],['重命名','rename'],['查看交付文件','outputs'],['移入回收站','trash']]){const action=plainButton(label,async()=>{more.open=false;await projectOperation(op,item);});if(op==='stop')action.disabled=item.status!=='working';if(op==='trash')action.classList.add('danger');menu.append(action);}more.append(menu);row.append(more);box.append(row);}if(!projects.length)box.append(el('p','点击新建，放入第一段文案。','muted'));}
 function cacheKey(shot){return `${project.id}/${shot.shot_id}/${JSON.stringify([shot.scene,shot.motion,shot.duration_s,project.canvas.fps])}`;}
 async function preload(shot){if(shot.scene){const key=cacheKey(shot);if(!sceneFrames.has(key)){const pending=api(`/api/projects/${project.id}/scene?shot_id=${encodeURIComponent(shot.shot_id)}`).then(result=>{sceneFrames.set(key,result.frames);paint();return result.frames;}).catch(error=>{sceneFrames.delete(key);toast(error.message);});sceneFrames.set(key,pending);while(sceneFrames.size>24)sceneFrames.delete(sceneFrames.keys().next().value);}return;}for(const asset of [shot.background,...shot.foregrounds].filter(Boolean)){const url=fileURL(project.id,asset.path);if(!images.has(url)){const image=new Image();images.set(url,image);image.onload=paint;image.onerror=()=>toast('图片加载失败，请检查素材文件');image.src=url;}}}
-function renderDetail(data){$('compare-image').hidden=true;$('compare').textContent='对比上一编辑版本';if(activeProject&&data.id!==activeProject)return;project=data;activeProject=data.id;localStorage.setItem('avstudio-active',data.id);if(!shots().some(s=>s.shot_id===selected))selected=shots()[0]?.shot_id||null;clock=Math.min(clock,total());dirty=false;$('project-title').textContent=data.title;$('canvas-label').textContent=`${data.canvas.width} × ${data.canvas.height} · ${data.canvas.fps} fps`;$('timeline-note').textContent='镜头时长为剪辑参考 · 点击选择 / 右键更多';drawLibrary();drawTimeline();drawInspector();setStatus();for(const s of shots())preload(s);paint();if($('production-dialog').open)drawDrawer();}
+function renderDetail(data){$('compare-image').hidden=true;$('compare').textContent='对比上一编辑版本';if(activeProject&&data.id!==activeProject)return;project=data;observedProject=data;activeProject=data.id;localStorage.setItem('avstudio-active',data.id);if(!shots().some(s=>s.shot_id===selected))selected=shots()[0]?.shot_id||null;clock=Math.min(clock,total());dirty=false;$('project-title').textContent=data.title;$('canvas-label').textContent=`${data.canvas.width} × ${data.canvas.height} · ${data.canvas.fps} fps`;$('timeline-note').textContent='镜头时长为剪辑参考 · 点击选择 / 右键更多';drawLibrary();drawTimeline();drawInspector();setStatus();for(const s of shots())preload(s);paint();if($('production-dialog').open)drawDrawer();}
 async function openProject(id){if(dirty)await save();playing=false;const result=await api(`/api/projects/${encodeURIComponent(id)}`);activeProject=id;selected=null;clock=0;renderDetail(result);}
 function drawTimeline(){const track=$('shot-track');track.replaceChildren();$('scrub').max=total()||1;$('duration-label').textContent=fmt(total());for(const s of shots()){const button=el('button',undefined,'timeline-shot'+(s.shot_id===selected?' active':''));button.style.width=`${Math.min(210,Math.max(115,s.duration_s*22))}px`;button.dataset.shot=s.shot_id;button.append(el('strong',s.shot_id),el('span',s.narrative_purpose),el('small',`${s.duration_s.toFixed(1)}s · ${s.scene?'程序动画':s.background?'图片 / 图层':'待画面'}`));button.onclick=()=>selectShot(s.shot_id).catch(e=>toast(e.message));button.oncontextmenu=async e=>{e.preventDefault();await selectShot(s.shot_id);showDrawer('workflow');};track.append(button);}if(!shots().length)track.append(el('p','设计分镜后，镜头将在这里出现。','empty-track'));}
 async function selectShot(id){if(dirty)await save();selected=id;clock=offset(id);playing=false;drawTimeline();drawInspector();paint();}
@@ -45,7 +50,7 @@ const layers=shot.timing?.layers||[{asset_id:shot.background.asset_id,start:[0,0
 function textOverlay(ctx,title,subtitle=''){ctx.textAlign='center';ctx.fillStyle='#97a6af';ctx.font=`${Math.max(20,$('canvas').width/45)}px Microsoft YaHei`;ctx.fillText(title,$('canvas').width/2,$('canvas').height/2);ctx.font=`${Math.max(13,$('canvas').width/80)}px Microsoft YaHei`;ctx.fillText(subtitle,$('canvas').width/2,$('canvas').height/2+45);}
 function tick(now){if(playing){clock+=Math.min(.1,(now-previousTick)/1000);if(clock>=total()){clock=total();playing=false;}paint();}previousTick=now;requestAnimationFrame(tick);}requestAnimationFrame(tick);
 function showDrawer(mode='workflow'){drawerMode=mode;drawDrawer();if(!$('production-dialog').open)$('production-dialog').showModal();}
-function drawDrawer(){const content=$('production-content');content.replaceChildren();$('drawer-title').textContent=drawerMode==='outputs'?'导出与交付':drawerMode==='help'?'工作台使用说明':'画面制作';if(drawerMode==='help'){content.append(el('p','新建并保存文案 → 制作面板选择本机 Codex 或其他 AI 设计 → 确认视觉方向 → 导入图片或按需使用程序场景 → 预览、定位和局部修改 → 确认画面并导出。'),el('p','Ctrl+S 保存当前镜头；Ctrl+Z 撤销；Ctrl+Shift+Z 重做；空格播放。修改先保存后生效；切换镜头会保存当前编辑。'),el('p','示例是程序绘制的技术样片；不会自动理解任意文案。AI 图像仍需所选工具制作后导入。本轮未集成配音接口。'));return;}if(!project){content.append(el('p','请先新建或打开作品。'));return;}if(drawerMode==='outputs'){const scope=select([['roughcut','整段无字幕动画'],['shots','独立动态镜头'],['images','图片与素材包'],['layers','真实分层素材']],project.brief.scope,'交付范围');content.append(field('交付范围',scope),plainButton('应用交付范围',async()=>{const form=new FormData();form.set('action','set_scope');form.set('scope',scope.value);renderDetail(await api(`/api/projects/${project.id}/actions`,{method:'POST',body:form}));await loadProjects();}));content.append(el('p','交付采用当前已保存镜头。修改后需重新确认画面并导出；历史文件仅供对照。','muted'));if(project.active_job){const job=project.workflow.jobs.find(j=>j.id===project.active_job);content.append(el('p',job?.message||'任务执行中','muted'),workflowButton('停止当前任务','cancel',project,true));}else content.append(workflowButton('确认当前画面','approve_artwork',project),workflowButton('生成交付包','deliver',project,true));for(const file of project.outputs){const link=el('a',file.name,'file-link');link.href=fileURL(project.id,file.path,true);link.append(el('small',size(file.bytes)));content.append(link);}return;}content.append(buildWorkflow(project));}
+function drawDrawer(){const content=$('production-content');content.replaceChildren();if(drawerMode==='management'){drawManagement(content);return;}if(drawerMode==='all-tasks'){$('drawer-title').textContent='后台任务 · 全部作品';for(const item of projects){const row=plainButton(`${item.title} · ${projectStatusName(item)} →`,async()=>{await openProject(item.id);showDrawer('activity');});row.classList.add('file-link');content.append(row);}if(!projects.length)content.append(el('p','还没有作品。'));return;}if(drawerMode==='activity'){$('drawer-title').textContent='任务执行记录';content.append(buildTaskHistory(observedProject||project));return;}$('drawer-title').textContent=drawerMode==='outputs'?'导出与交付':drawerMode==='help'?'工作台使用说明':'画面制作';if(drawerMode==='help'){content.append(el('p','新建并保存文案 → 制作面板选择本机 Codex 或其他 AI 设计 → 确认视觉方向 → 导入图片或按需使用程序场景 → 预览、定位和局部修改 → 确认画面并导出。'),el('p','Ctrl+S 保存当前镜头；Ctrl+Z 撤销；Ctrl+Shift+Z 重做；空格播放。修改先保存后生效；切换镜头会保存当前编辑。'),el('p','示例是程序绘制的技术样片；不会自动理解任意文案。AI 图像仍需所选工具制作后导入。本轮未集成配音接口。'));return;}if(!project){content.append(el('p','请先新建或打开作品。'));return;}if(drawerMode==='outputs'){const scope=select([['roughcut','整段无字幕动画'],['shots','独立动态镜头'],['images','图片与素材包'],['layers','真实分层素材']],project.brief.scope,'交付范围');content.append(field('交付范围',scope),plainButton('应用交付范围',async()=>{const form=new FormData();form.set('action','set_scope');form.set('scope',scope.value);renderDetail(await api(`/api/projects/${project.id}/actions`,{method:'POST',body:form}));await loadProjects();}));content.append(el('p','交付采用当前已保存镜头。修改后需重新确认画面并导出；历史文件仅供对照。','muted'));if(project.active_job){const job=project.workflow.jobs.find(j=>j.id===project.active_job);content.append(el('p',job?.message||'任务执行中','muted'),workflowButton('停止当前任务','cancel',project,true));}else content.append(workflowButton('确认当前画面','approve_artwork',project),workflowButton('生成交付包','deliver',project,true));for(const file of project.outputs){const link=el('a',file.name,'file-link');link.href=fileURL(project.id,file.path,true);link.append(el('small',size(file.bytes)));content.append(link);}return;}content.append(buildWorkflow(project));}
 async function action(name){if(!project)throw new Error('请先打开作品');if(dirty)await save();const form=new FormData();form.set('action',name);renderDetail(await api(`/api/projects/${project.id}/actions`,{method:'POST',body:form}));await loadProjects();}
 async function command(name){for(const menu of document.querySelectorAll('.menubar details'))menu.open=false;
 if(name==='new'){$('new-dialog').showModal();return;}if(name==='help'){showDrawer('help');return;}if(name==='theme'){document.body.classList.toggle('light');localStorage.setItem('avstudio-theme',document.body.classList.contains('light')?'light':'dark');return;}if(name==='inspector'){document.body.classList.toggle('no-inspector');return;}if(name==='reset-layout'){document.body.classList.remove('no-inspector');return;}if(name==='projects'){libraryTab='projects';drawLibrary();return;}if(name==='refresh'){await loadProjects();return;}
@@ -60,4 +65,87 @@ document.addEventListener('keydown',event=>{const typing=event.target.matches('i
 window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
 if(localStorage.getItem('avstudio-theme')==='light')document.body.classList.add('light');
 api('/api/config').then(async config=>{token=config.csrf_token;$('connection').textContent=`LOCAL · ${config.version}`;await loadProjects();const remembered=localStorage.getItem('avstudio-active');const id=projects.some(p=>p.id===remembered)?remembered:projects[0]?.id;if(id)await openProject(id);else setStatus();}).catch(error=>{$('status').textContent='本机服务连接失败：'+error.message;});
-setInterval(async()=>{if(!project||dirty||mutating||document.hidden)return;try{const id=activeProject,result=await api(`/api/projects/${id}`);if(activeProject!==id||dirty||mutating)return;if(result.editor.revision!==project.editor.revision||result.active_job!==project.active_job||JSON.stringify(result.workflow.jobs)!==JSON.stringify(project.workflow.jobs)){const time=clock;renderDetail(result);clock=Math.min(time,total());paint();await loadProjects();}}catch(error){$('status').textContent=error.message;}},4000);
+async function pollProject(){
+  if(!project||mutating||document.hidden)return;
+  try {
+    const id=activeProject,result=await api(`/api/projects/${id}`);
+    if(activeProject!==id||mutating)return;
+    syncProblem='';observedProject=result;renderActivity(result);if(Date.now()-lastProjectSync>6000){lastProjectSync=Date.now();await loadProjects();}
+    if(activeProject!==id||dirty)return;
+    if(result.editor.revision!==project.editor.revision||result.active_job!==project.active_job||result.status!==project.status||JSON.stringify(result.workflow)!==JSON.stringify(project.workflow)) {
+      const time=clock;renderDetail(result);clock=Math.min(time,total());paint();await loadProjects();
+    }
+  }catch(error){syncProblem='连接中断，显示的是上次状态；正在自动重试';$('status').textContent=syncProblem;renderActivity(observedProject||project);}
+}
+setInterval(pollProject,2000);
+setInterval(()=>renderActivity(observedProject||project),1000);
+
+function renderActivity(data){
+  const summary=activitySummary(data),job=summary.job;
+  $('activity-title').textContent=summary.title;
+  $('activity-badge').textContent=syncProblem?'连接中断':({idle:'就绪',waiting:'等待操作',running:job?.status==='queued'?'排队中':job?.status==='cancelling'?'停止中':'执行中',failed:'需要处理',succeeded:'已完成'}[summary.kind]);
+  $('activity-panel').classList.toggle('failure',!!syncProblem||summary.kind==='failed');
+  const message=syncProblem?`${syncProblem}。${summary.message}`:summary.message;if($('activity-message').textContent!==message)$('activity-message').textContent=message;
+  $('activity-next').textContent=summary.next;
+  $('activity-open').textContent=summary.label;
+  $('activity-open').onclick=()=>{if(summary.cta==='new')command('new').catch(e=>toast(e.message));else showDrawer(summary.cta==='history'?'activity':summary.cta);};
+  $('activity-stop').hidden=summary.kind!=='running';$('activity-stop').disabled=job?.status==='cancelling';
+  const progress=$('activity-progress');progress.hidden=summary.kind!=='running';
+  if(Number.isInteger(job?.completed)&&Number.isInteger(job?.total)&&job.total>0&&job.completed>=0&&job.completed<=job.total){progress.max=job.total;progress.value=job.completed;progress.setAttribute('aria-valuetext',`已完成 ${job.completed}/${job.total} ${job.unit||'项'}`);}else{progress.removeAttribute('value');progress.removeAttribute('aria-valuetext');}
+  if(job){const start=Date.parse(job.started_at||job.created_at),last=Date.parse(job.updated_at||job.started_at||job.created_at);$('activity-time').textContent=`已用时 ${fmt(Math.floor(Math.max(0,(Date.now()-start)/1000))).slice(0,-3)} · ${Math.max(0,Math.floor((Date.now()-last)/1000))}秒前更新`;}
+  else $('activity-time').textContent='';
+  $('status').textContent=syncProblem||summary.message;
+  $('cancel-job').hidden=!data?.active_job;
+  $('cancel-job').disabled=job?.status==='cancelling';
+  $('undo').disabled=!data||(!dirty&&!project?.editor.can_undo)||!!data.active_job;
+  const latest=data?.workflow.jobs?.[0];
+  if(job)lastTaskNotice=job.id;
+  else if(latest&&latest.id===lastTaskNotice){lastTaskNotice=null;toast(latest.status==='succeeded'?'任务已完成，请查看当前步骤':latest.message);}
+}
+async function stopTask(){if(!project)return;try{const form=new FormData();form.set('action','cancel');const result=await api(`/api/projects/${project.id}/actions`,{method:'POST',body:form});observedProject=result;if(dirty)renderActivity(result);else renderDetail(result);}catch(error){toast(error.message);}}
+function buildTaskHistory(data){
+  const box=el('div');
+  if(!data?.workflow.jobs.length){box.append(el('p','当前作品还没有后台任务；复制任务给外部 AI 后，其执行进度无法由本机自动获知。','muted'));return box;}
+  for(const job of data.workflow.jobs){
+    box.append(el('h3',`${({plan:'分镜设计',preview:'动态预览',deliver:'正式交付'})[job.action]||job.action} · ${({queued:'排队',running:'运行中',cancelling:'停止中',succeeded:'完成',failed:'失败',cancelled:'已取消',interrupted:'已中断'})[job.status]||job.status}`,'task-log-title'));
+    const entries=job.events?.length?job.events:[{at:job.updated_at||job.finished_at||job.created_at,message:job.message}];
+    for(const event of entries){const row=el('div',event.message,'task-event');row.append(el('small',event.at));box.append(row);}
+  }return box;
+}
+$('activity-stop').onclick=stopTask;$('cancel-job').onclick=stopTask;
+$('activity-history').onclick=()=>showDrawer('activity');
+
+$('all-tasks').onclick=async()=>{try{await loadProjects();showDrawer('all-tasks');}catch(error){toast(error.message);}};
+
+async function manageProject(id, fields){const form=new FormData();for(const [key,value] of Object.entries(fields))form.set(key,value);return api(`/api/projects/${encodeURIComponent(id)}/manage`,{method:'POST',body:form});}
+async function loadTrash(){trashedProjects=(await api('/api/trash')).projects;drawLibrary();}
+async function cancelProject(id){const form=new FormData();form.set('action','cancel');const result=await api(`/api/projects/${id}/actions`,{method:'POST',body:form});if(id===activeProject){observedProject=result;if(dirty)renderActivity(result);else renderDetail(result);}await loadProjects();toast('已请求停止；正在停止的步骤结束后，已有内容会保留');}
+async function projectOperation(operation,item){
+  if(operation==='open'){await openProject(item.id);return;}
+  if(operation==='stop'){await cancelProject(item.id);return;}
+  if(operation==='outputs'){await openProject(item.id);showDrawer('outputs');return;}
+  if(item.id===activeProject&&dirty&&operation!=='status')await save();
+  managementTarget=await api(`/api/projects/${item.id}`);managementMode=operation;showDrawer('management');
+}
+function drawManagement(content){
+  const item=managementTarget;if(!item)return;
+  $('drawer-title').textContent=`${({status:'制作状态',rename:'重命名',trash:'移入回收站'})[managementMode]} · ${item.title}`;
+  const state=activitySummary(item);content.append(el('p',state.title),el('p',state.message,'muted'));
+  if(item.active_job){content.append(el('p','正在执行任务，重命名和移入回收站需等待任务结束或停止完成。','muted'),plainButton('停止当前制作',async()=>{await cancelProject(item.id);}),plainButton('刷新状态',async()=>{managementTarget=await api(`/api/projects/${item.id}`);drawDrawer();}));}
+  if(managementMode==='status'){
+    content.append(plainButton(state.label,async()=>{await openProject(item.id);showDrawer(state.cta==='outputs'?'outputs':'workflow');}),buildTaskHistory(item));return;
+  }
+  if(managementMode==='rename'){
+    const title=input('text',item.title,'作品新名称');title.maxLength=200;content.append(field('作品新名称',title));const saveName=plainButton('保存名称',async()=>{const result=await manageProject(item.id,{operation:'rename',title:title.value});if(item.id===activeProject)renderDetail(result);$('production-dialog').close();await loadProjects();toast('作品已重命名');},false);saveName.disabled=!!item.active_job;content.append(saveName);return;
+  }
+  content.append(el('p','文案、素材、成片与历史会一起保留，可在左侧“回收站”还原。此操作不会永久删除文件。','muted'));
+  const remove=plainButton('确认移入回收站',async()=>{
+    await manageProject(item.id,{operation:'trash',confirmed:'1'});
+    const wasActive=item.id===activeProject;
+    if(wasActive){activeProject=null;project=null;observedProject=null;selected=null;dirty=false;playing=false;clock=0;$('compare-image').hidden=true;$('canvas-label').textContent='适应窗口';localStorage.removeItem('avstudio-active');}
+    $('production-dialog').close();libraryTab='projects';await loadProjects();
+    if(wasActive){if(projects.length)await openProject(projects[0].id);else{$('project-title').textContent='未打开作品';drawTimeline();drawInspector();setStatus();paint();}}
+    toast('作品已移入回收站，可随时还原');
+  },false);remove.disabled=!!item.active_job;remove.classList.add('danger');content.append(remove);
+}
+$('tab-trash').onclick=async()=>{libraryTab='trash';try{await loadTrash();}catch(error){toast(error.message);}};

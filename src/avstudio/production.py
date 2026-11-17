@@ -219,8 +219,10 @@ class Production:
                 from .taskpacks import project_brief
                 brief = project_brief(root, data, meta)
             work = root / "work/planner" / meta["active_job"]
+            progress({"message": "正在设计分镜，等待本机 Codex 返回；此阶段无法计算准确百分比", "stage": "planning"})
             plan = self.planner(data, brief, feedback, work, cancelled, progress)
             if cancelled.is_set(): raise StudioError("任务已取消")
+            progress({"message": "分镜已返回，正在校验格式、原文覆盖与保存方案", "stage": "validating"})
             with self.desk.lock:
                 self.adopt(root, plan)
             return
@@ -229,11 +231,14 @@ class Production:
         if preview or data["scope"] in {"shots", "roughcut"}:
             for index, shot in enumerate(data["shots"], 1):
                 if cancelled.is_set(): raise StudioError("任务已取消")
-                progress(f"正在渲染 {shot['shot_id']}（{index}/{len(data['shots'])}）；未变化镜头会复用缓存")
+                progress({"message": f"正在渲染 {shot['shot_id']}（{index}/{len(data['shots'])}）；未变化镜头会复用缓存",
+                          "stage": "rendering", "completed": index-1, "total": len(data["shots"]), "unit": "镜头"})
                 receipt = render_shot(root, data, shot, preview, cancelled=cancelled)
                 source = local(root, receipt["output"])
                 target = root / "output" / source.name
                 if not target.exists(): shutil.copyfile(source, target)
+                progress({"message": f"已完成 {index}/{len(data['shots'])} 个镜头" + ("（复用缓存）" if receipt.get("cached") else ""),
+                          "stage": "rendering", "completed": index, "total": len(data["shots"]), "unit": "镜头"})
         if cancelled.is_set(): raise StudioError("任务已取消")
         if preview:
             with self.desk.lock:
@@ -242,9 +247,9 @@ class Production:
         # Media work must not hold the global web lock or block progress reads.
         assembled = None
         if data["scope"] == "roughcut":
-            progress("正在合成无字幕粗剪并完整解码检查")
+            progress({"message": "镜头渲染完成，正在合成整片并进行完整解码检查", "stage": "assembling"})
             assembled = assemble(root)["output"]
-        progress("正在整理交接包、清单与校验文件")
+        progress({"message": "正在整理交付包、源素材与校验清单", "stage": "packaging"})
         output = package(root, include_renders=data["scope"] in {"shots", "roughcut"}, assembled=assembled)
         with self.desk.lock:
             self.update(root, status="complete", current_stage="delivery", delivery_file=output.relative_to(root).as_posix())
@@ -265,6 +270,9 @@ class Production:
         for path in sorted((root / "work/jobs").glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:8]:
             jobs.append(read_json(path))
         return {"stage": meta.get("current_stage", "storyboard"), "shots": shots, "jobs": jobs,
+                "summary": (plan or {}).get("summary", ""),
+                "visual_style": (plan or {}).get("visual_style", ""),
+                "character_notes": (plan or {}).get("character_notes", ""),
                 "approvals": meta.get("approvals", {}), "has_audio": bool(data.get("narration")),
                 "audio_path": data.get("narration"), "error": meta.get("error"),
                 "has_plan": plan is not None, "ready_count": sum(bool(s["background"] or s.get("scene")) for s in shots),

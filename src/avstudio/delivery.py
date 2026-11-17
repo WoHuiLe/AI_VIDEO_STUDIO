@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .project import export_assets, export_storyboard, require_valid
 from .render import current_render
-from .storage import StudioError, atomic_text, event, local, read_json, sha256
+from .storage import StudioError, atomic_text, event, local, read_json, sha256, replace_file
 
 
 def package(root: Path, include_renders=False, assembled=None) -> Path:
@@ -91,7 +91,7 @@ def package(root: Path, include_renders=False, assembled=None) -> Path:
             bad = archive.testzip()
             if bad:
                 raise StudioError(f"交接包校验失败：{bad}")
-        os.replace(temp, output)
+        replace_file(temp, output)
         event(root, "package", {"output": output.relative_to(root).as_posix()})
         return output
     finally:

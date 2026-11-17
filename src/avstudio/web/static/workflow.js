@@ -27,6 +27,9 @@ function buildWorkflow(project) {
     box.append(el('h3','资料已收到，下一步是设计分镜'),el('p','开始后会使用本机已登录 Codex 的额度。完成后先审核方案，再准备图片。','workflow-hint'),workflowButton('用本机 Codex 设计分镜','plan',project));
   } else if(!flow.approvals.storyboard) {
     box.append(el('h3',flow.needs_revision?'修改意见已保存，请重新设计分镜':'请先确认分镜方向'),el('p',`已设计 ${flow.shots.length} 个镜头。查看下方方案与逐镜头提示，认可后继续。`,'workflow-hint'));
+    const overview=el('details',undefined,'plan-overview');overview.open=true;overview.append(el('summary','整体方案与美术方向'));
+    for(const [label,value] of [['内容理解',flow.summary],['美术方向',flow.visual_style],['人物与连续性',flow.character_notes]])if(value)overview.append(el('h3',label),el('p',value,'workflow-hint'));
+    box.append(overview);
     const approve=workflowButton('分镜通过，进入配图','approve_storyboard',project);approve.disabled=Boolean(flow.needs_revision);box.append(approve,workflowButton('用本机 Codex 重新设计','plan',project,true));
   } else {
     box.append(el('h3',project.status==='complete'?'交付已生成，可在下方下载':'准备镜头素材'),el('p',`已准备 ${flow.ready_count} / ${flow.shots.length} 个镜头。可在 ChatGPT 等工具中按提示生图，保存到文件夹后批量导入，也可逐镜头上传；本页不调用付费图像 API。`,'workflow-hint'));
