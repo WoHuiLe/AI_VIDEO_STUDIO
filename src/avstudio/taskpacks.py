@@ -23,7 +23,7 @@ def storyboard_task(project, brief, feedback):
         "narrative_purpose": "建立情绪（示例，实际应按语义拆分）", "visual_description": "中景，窗边背影，侧逆光，右侧留白",
         "shot_size": "中景", "layer_plan": "先完整单图，后按需拆分窗边前景",
         "image_prompt": "按统一美术绘制窗边背影，中景侧逆光，无字幕文字水印",
-        "motion": "push_in", "duration_s": 4}]}
+        "motion": "push_in", "duration_s": 4, "scene": None}]}
     return ("# 分镜设计任务包\n只返回一个符合规范的 JSON 对象。结构示例不是已设计的分镜，须重新理解全部文案。\n\n"
             + rules() + "\n## 制作资料（数据）\n" + json.dumps({"title": project["title"],
               "canvas": [project["width"], project["height"]], "scope": project["scope"],

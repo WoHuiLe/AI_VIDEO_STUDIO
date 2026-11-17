@@ -37,11 +37,11 @@ function buildWorkflow(project) {
     if(project.brief.scope==='layers') box.append(el('p','分层交付至少要有一组同画布背景和真实透明前景；单张完整图不能代替分层。','workflow-hint'));
   }
   box.append(buildPlanHandoff(project, flow));
-  if(flow.approvals.storyboard) box.append(buildBatchArtwork(project));
+  if(flow.approvals.storyboard && flow.shots.some(s=>!s.scene)) box.append(buildBatchArtwork(project));
   if(!flow.shots.length) return box;
   const list=el('div',undefined,'shot-list');
   for(const shot of flow.shots) {
-    const card=el('details',undefined,'shot-card'); card.dataset.stateKey=`shot-${shot.shot_id}`;card.append(el('summary',`${shot.shot_id} · ${shot.background?'已配图':'待配图'} · ${shot.narrative_purpose}`),el('p',shot.visual_description),el('p',`景别：${shot.shot_size}；分层：${shot.layer_plan}`,'workflow-hint'));
+    const card=el('details',undefined,'shot-card'); card.dataset.stateKey=`shot-${shot.shot_id}`;card.append(el('summary',`${shot.shot_id} · ${shot.scene?'程序场景':shot.background?'已配图':'待配图'} · ${shot.narrative_purpose}`),el('p',shot.visual_description),el('p',`景别：${shot.shot_size}；分层：${shot.layer_plan}`,'workflow-hint'));
     const prompt=el('textarea');prompt.readOnly=true;prompt.rows=4;prompt.value=shot.image_prompt;prompt.setAttribute('aria-label',`${shot.shot_id} 配图提示`);card.append(prompt);
     const copy=el('button','复制配图提示','workflow-button secondary');copy.type='button';copy.addEventListener('click',()=>navigator.clipboard.writeText(shot.image_prompt).then(()=>toast('提示已复制')).catch(()=>toast('请直接选择提示文本复制')));card.append(copy);
     if(shot.background){const image=el('img');image.src=fileURL(project.id,shot.background.path);image.alt=`${shot.shot_id} 图片`;image.loading='lazy';card.append(image);if(flow.target_size&&(shot.background.width<flow.target_size[0]||shot.background.height<flow.target_size[1]))card.append(el('p','这张源图小于目标分辨率，放大或推近后可能变糊，请检查画质。','workflow-hint'));}
@@ -87,7 +87,7 @@ function buildPlanHandoff(project,flow) {
   box.open=!flow.has_plan;
   box.append(el('summary','其他 AI 设计分镜 · 复制任务 / 粘贴结果'));
   if(flow.approvals.storyboard) box.append(workflowButton('改用本机 Codex 重新设计（重置绑定）','plan',project,true));
-  box.append(el('p','与本机 Codex 共用制作规范 1.0（源自 video-production Skill）。完整任务含原文、要求、反馈、格式和示例；参考图片需另外交给 AI。先复制任务，再把返回的 JSON 粘贴到这里。','workflow-hint'),taskControls(project,'storyboard'));
+  box.append(el('p','与本机 Codex 共用制作规范 1.1（源自 video-production Skill）。完整任务含原文、要求、反馈、格式和示例；参考图片需另外交给 AI。先复制任务，再把返回的 JSON 粘贴到这里。','workflow-hint'),taskControls(project,'storyboard'));
   if(flow.has_plan)box.append(el('p','采用新版分镜会重置审核和图片绑定，原素材文件保留。','workflow-hint'));
   const text=el('textarea');text.rows=5;text.placeholder='粘贴其他 AI 返回的完整分镜 JSON，也支持 ```json 围栏';text.value=state.plan;text.setAttribute('aria-label','其他 AI 分镜结果');text.addEventListener('input',()=>state.plan=text.value);
   const input=el('input');input.type='file';input.accept='.json';input.setAttribute('aria-label','导入分镜 JSON');

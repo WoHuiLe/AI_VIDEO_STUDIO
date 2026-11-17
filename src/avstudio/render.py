@@ -36,6 +36,8 @@ def signature(data: dict, shot: dict, preview=False) -> str:
                "size": geometry(data, preview), "fps": data["fps"],
                "frames": frame_count(shot["duration_s"], data["fps"]),
                "layers": shot["layers"],
+               "scene": shot.get("scene"),
+               **({"scene_motion": shot.get("motion", "static")} if shot.get("scene") else {}),
                "assets": {l["asset_id"]: data["assets"][l["asset_id"]]["sha256"]
                           for l in shot["layers"]}}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
@@ -84,7 +86,7 @@ def render_shot(root: Path, data: dict, shot: dict, preview=False, cancelled=Non
             else:
                 master = (oriented.width, max(1, round(oriented.width / ratio)))
             layers.append(ImageOps.fit(oriented, master, method=Image.Resampling.LANCZOS))
-    if layers[0].getchannel("A").getextrema()[0] != 255:
+    if not shot.get("scene") and (not layers or layers[0].getchannel("A").getextrema()[0] != 255):
         raise StudioError(f"{shot['shot_id']} 底层背景必须不透明并已补齐")
     frames = frame_count(shot["duration_s"], data["fps"])
     fd, temp_name = tempfile.mkstemp(dir=folder, suffix=".mp4")
@@ -104,7 +106,12 @@ def render_shot(root: Path, data: dict, shot: dict, preview=False, cancelled=Non
                 for index in range(frames):
                     if cancelled is not None and cancelled.is_set():
                         raise StudioError("任务已取消")
-                    image = frame(layers, shot["layers"], size, index / max(1, frames - 1))
+                    progress = index / max(1, frames - 1)
+                    if shot.get("scene"):
+                        from .scenes import raster
+                        image = raster(shot["scene"], progress, size, shot.get("motion", "static"))
+                    else:
+                        image = frame(layers, shot["layers"], size, progress)
                     proc.stdin.write(image.tobytes())
                 proc.stdin.close()
                 code = proc.wait(timeout=300)

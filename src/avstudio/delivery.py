@@ -13,12 +13,18 @@ from .render import current_render
 from .storage import StudioError, atomic_text, event, local, read_json, sha256
 
 
-def package(root: Path, include_renders=False) -> Path:
+def package(root: Path, include_renders=False, assembled=None) -> Path:
     data = require_valid(root)
     export_storyboard(root)
     export_assets(root)
     files = {local(root, "project.json"), local(root, data["script"]),
              local(root, "planning/storyboard.csv"), local(root, "planning/assets.csv")}
+    if assembled:
+        video = local(root, assembled)
+        receipt = read_json(video.with_suffix(".json"))
+        if receipt.get("output_sha256") != sha256(video):
+            raise StudioError("合成视频校验失败")
+        files.update([video, video.with_suffix(".json")])
     for name in ["visual_task.md", "handoff.md", "character_bible.md", "style.md",
                  "review_notes.md", "prompts.md", "director.json", "shot_assets.json",
                  "brief.md", "submission.json", "feedback.json"]:

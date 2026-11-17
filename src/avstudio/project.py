@@ -220,7 +220,10 @@ def validate(data: dict, root: Path) -> list[str]:
                 if (not data.get("narration") or start is None
                         or shot.get("alignment_audio_sha256") != data.get("narration_sha256")):
                     errors.append(f"{sid} 对齐必须关联当前旁白哈希和真实时间")
-            if not shot["layers"]:
+            if shot.get("scene") is not None:
+                from .scenes import validate_scene
+                validate_scene(shot["scene"])
+            if not shot["layers"] and shot.get("scene") is None:
                 errors.append(f"{sid} 缺图层")
             sizes = set()
             for layer in shot["layers"]:

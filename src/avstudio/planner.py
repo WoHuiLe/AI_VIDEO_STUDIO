@@ -10,12 +10,16 @@ from pathlib import Path
 from .storage import StudioError, identifier, read_json, write_json
 
 TEXT_FIELDS = ["narrative_purpose", "visual_description", "shot_size", "layer_plan", "image_prompt"]
+SCENE_SCHEMA = {"type": "object", "additionalProperties": False, "properties": {
+    "palette": {"type": "string", "enum": ["night", "warm", "dawn"]},
+    "rain": {"type": "number"}, "lamp": {"type": "number"}, "walk": {"type": "boolean"}},
+    "required": ["palette", "rain", "lamp", "walk"]}
 SHOT_SCHEMA = {"type": "object", "additionalProperties": False, "properties": {
     "shot_id": {"type": "string"}, "segment_ids": {"type": "array", "items": {"type": "string"}},
     **{key: {"type": "string"} for key in TEXT_FIELDS},
     "motion": {"type": "string", "enum": ["static", "push_in", "pull_out", "pan_left", "pan_right"]},
-    "duration_s": {"type": "number"}},
-    "required": ["shot_id", "segment_ids", *TEXT_FIELDS, "motion", "duration_s"]}
+    "duration_s": {"type": "number"}, "scene": {"anyOf": [SCENE_SCHEMA, {"type": "null"}]}},
+    "required": ["shot_id", "segment_ids", *TEXT_FIELDS, "motion", "duration_s", "scene"]}
 PLAN_SCHEMA = {"type": "object", "additionalProperties": False, "properties": {
     "summary": {"type": "string"}, "visual_style": {"type": "string"},
     "character_notes": {"type": "string"},
@@ -58,6 +62,9 @@ def validate_plan(plan, project):
             raise StudioError("镜头格式无效")
         if not isinstance(shot.get("shot_id"), str):
             raise StudioError("镜头编号必须是字符串")
+        if shot.get("scene") is not None:
+            from .scenes import validate_scene
+            validate_scene(shot["scene"])
         sid = identifier(shot["shot_id"])
         if sid.casefold() in seen:
             raise StudioError("镜头编号重复")

@@ -110,7 +110,7 @@ class Production:
             raise StudioError("请先审核分镜方案")
         plan = self.plan(root)
         mapping = self.mapping(root)
-        missing = [s["shot_id"] for s in plan["shots"] if not mapping.get(s["shot_id"], {}).get("background")]
+        missing = [s["shot_id"] for s in plan["shots"] if not s.get("scene") and not mapping.get(s["shot_id"], {}).get("background")]
         if missing:
             raise StudioError("这些镜头还缺图片或干净背景：" + "、".join(missing))
         if load_project(root)["scope"] == "layers" and not any(m.get("foregrounds") for m in mapping.values()):
@@ -171,7 +171,7 @@ class Production:
         shots = []
         for planned in self.plan(root)["shots"]:
             mapped = mapping.get(planned["shot_id"], {})
-            if not mapped.get("background"):
+            if not mapped.get("background") and not planned.get("scene"):
                 continue
             motion = planned["motion"]
             start, end = [0, 0, 1.06], [0, 0, 1.06]
@@ -181,7 +181,7 @@ class Production:
             if motion == "pan_right": start, end = [-0.02, 0, 1.08], [0.02, 0, 1.08]
             shot = {**planned, "source_text": "\n".join(segments[s] for s in planned["segment_ids"]),
                     "start_s": None, "end_s": None, "timeline_status": "provisional",
-                    "review_status": "needs_review", "layers": [
+                    "review_status": "needs_review", "layers": [] if planned.get("scene") else [
                         {"asset_id": mapped["background"], "start": start, "end": end}]}
             for aid in mapped.get("foregrounds", []):
                 shot["layers"].append({"asset_id": aid, "start": [0.02, 0, 1.12], "end": [-0.02, 0, 1.12]})
@@ -240,11 +240,12 @@ class Production:
                 self.update(root, status="review", current_stage="artwork", review_stage="artwork")
             return
         # Media work must not hold the global web lock or block progress reads.
+        assembled = None
         if data["scope"] == "roughcut":
             progress("正在合成无字幕粗剪并完整解码检查")
-            assemble(root)
+            assembled = assemble(root)["output"]
         progress("正在整理交接包、清单与校验文件")
-        output = package(root, include_renders=data["scope"] in {"shots", "roughcut"})
+        output = package(root, include_renders=data["scope"] in {"shots", "roughcut"}, assembled=assembled)
         with self.desk.lock:
             self.update(root, status="complete", current_stage="delivery", delivery_file=output.relative_to(root).as_posix())
 
@@ -266,5 +267,5 @@ class Production:
         return {"stage": meta.get("current_stage", "storyboard"), "shots": shots, "jobs": jobs,
                 "approvals": meta.get("approvals", {}), "has_audio": bool(data.get("narration")),
                 "audio_path": data.get("narration"), "error": meta.get("error"),
-                "has_plan": plan is not None, "ready_count": sum(bool(s["background"]) for s in shots),
+                "has_plan": plan is not None, "ready_count": sum(bool(s["background"] or s.get("scene")) for s in shots),
                 "needs_revision": meta.get("needs_revision", False), "target_size": [data["width"], data["height"]]}

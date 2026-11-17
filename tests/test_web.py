@@ -152,7 +152,7 @@ def test_download_and_video_ranges_cannot_escape_project(web):
 def test_static_page_and_assets_have_correct_types(web):
     status, headers, html = request(web, "/")
     assert status == 200 and "text/html" in headers["Content-Type"]
-    assert "把故事交给画面" in html.decode()
+    assert "镜头时间线" in html.decode() and "studio.js" in html.decode()
     assert request(web, "/app.js")[0] == request(web, "/style.css")[0] == 200
     config = json.loads(request(web, "/api/config")[2])
     assert config["max_upload_bytes"] == MAX_BODY

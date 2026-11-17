@@ -93,6 +93,8 @@ class Desk:
         from ..production import Production
         from ..jobs import Jobs
         self.production = Production(self, planner)
+        from ..editor import Editor
+        self.editor = Editor(self.production)
         from ..batch import FolderImports
         self.folder_imports = FolderImports(self.production)
         self.jobs = Jobs(self, self.production.execute)
@@ -252,7 +254,8 @@ class Desk:
         return {**submission, "script": local(root, data["script"]).read_text(encoding="utf-8-sig"),
                 "feedback": read_json(local(root, "planning/feedback.json")), "outputs": outputs,
                 "segment_count": len(data["segments"]), "shot_count": len(data["shots"]),
-                "workflow": self.production.view(root)}
+                "workflow": self.production.view(root), "editor": self.editor.view(root),
+                "canvas": {"width": data["width"], "height": data["height"], "fps": data["fps"]}, "assets": data["assets"]}
 
     def feedback(self, project_id, fields, files):
         request_id = text_field(fields, "request_id", 32)
@@ -319,6 +322,17 @@ class Desk:
             self.jobs.start(project_id, action)
         elif action == "cancel":
             self.jobs.cancel(project_id)
+        elif action == "set_scope":
+            scope = fields.get("scope")
+            if scope not in SCOPES:
+                raise StudioError("交付范围无效")
+            with self.lock:
+                self.production.idle(root)
+                data = load_project(root)
+                data["scope"] = scope
+                write_json(root / "project.json", data)
+                meta = self.production.meta(root)
+                self.production.update(root, brief={**meta["brief"], "scope": scope})
         elif action in {"approve_storyboard", "approve_artwork"}:
             with self.lock:
                 self.production.approve(root, action.removeprefix("approve_"))
@@ -382,13 +396,45 @@ class Desk:
             raise StudioError("每次请选择一张 PNG/JPEG/WebP 图片")
         root = self.project(project_id)
         with self.lock, tempfile.TemporaryDirectory(prefix="avstudio-art-") as temporary:
+            before, history = self.editor.snapshot(root), self.editor.history(root)
             path = Path(temporary) / ("image" + files[0]["suffix"])
             path.write_bytes(files[0]["bytes"])
             try:
                 self.production.bind(root, fields.get("shot_id"), fields.get("role"), path)
+                self.editor.record(root, before, history, "替换镜头素材")
             except OSError as exc:
                 raise StudioError("无法读取这张图片，请检查文件是否完整") from exc
         return self.detail(project_id)
+
+    def edit(self, project_id, fields, files):
+        if files:
+            raise StudioError("编辑操作不接收附件")
+        with self.lock:
+            self.editor.apply(self.project(project_id), fields)
+            return self.detail(project_id)
+
+    def demo(self, fields, files):
+        if files:
+            raise StudioError("示例不接收附件")
+        item = self.submit({"title": "窗边 · 动画示例", "script": "夜色里，窗边的灯还亮着。\n\n有人慢慢走近，把等待变成陪伴。\n\n天快亮了，故事还在继续。",
+                            "scope": "roughcut", "style": "剪纸叙事", "ratio": "16:9", "request_id": fields.get("request_id", "")}, [])
+        root = self.project(item["id"])
+        with self.lock:
+            if self.production.view(root)["has_plan"]:
+                return self.detail(item["id"])
+            shots=[]
+            for index, palette in enumerate(["night", "warm", "dawn"], 1):
+                shots.append({"shot_id": f"S{index:03}", "segment_ids": [f"SEG{index:03}"],
+                    "narrative_purpose": ["建立等待", "靠近与陪伴", "安静收束"][index-1],
+                    "visual_description": "窗边、纸页与暖灯；以剪纸人物和环境运动连接情绪。",
+                    "shot_size": "中景", "layer_plan": "程序绘制独立元素", "image_prompt": "本镜头由程序绘制，可替换为自备图片；不调用生图服务。",
+                    "motion": "static", "duration_s": 4,
+                    "scene": {"palette": palette,"rain": .65 if index==1 else .15,"walk": index==2,"lamp": .8}})
+            self.production.adopt(root, {"summary":"独立技术与交互示例，不是对用户作品的自动创作结果。",
+                "visual_style":"统一剪纸轮廓、灰蓝环境与暖色点光", "character_notes":"同一剪影人物，呼吸与步态由程序驱动", "shots": shots})
+            self.production.approve(root,"storyboard")
+            self.production.rebuild(root)
+            return self.detail(item["id"])
 
     def timeline(self, project_id, fields, files):
         from ..media import import_timeline
@@ -495,6 +541,33 @@ class Handler(BaseHTTPRequestHandler):
                     self.headers_for("image/jpeg", len(content))
                     self.end_headers()
                     return self.wfile.write(content)
+                if pieces[3] == "scene":
+                    from ..scenes import commands
+                    from ..render import frame_count
+                    query = parse_qs(parsed.query)
+                    with self.server.desk.lock:
+                        root = self.server.desk.project(project_id)
+                        plan = self.server.desk.production.plan(root)
+                        shot = next((s for s in plan["shots"] if s["shot_id"] == query.get("shot_id", [""])[0]), None)
+                        if not shot or not shot.get("scene"):
+                            raise StudioError("该镜头不是程序场景")
+                        frames = min(300, frame_count(shot["duration_s"], load_project(root)["fps"]))
+                        result = {"frames": [commands(shot["scene"], i/max(1,frames-1), shot.get("motion", "static")) for i in range(frames)]}
+                    return self.json(result)
+                if pieces[3] == "comparison":
+                    import io
+                    query = parse_qs(parsed.query)
+                    with self.server.desk.lock:
+                        root = self.server.desk.project(project_id)
+                        if query.get("revision", [""])[0] != self.server.desk.editor.view(root)["revision"]:
+                            raise StudioError("工程版本已变化，请重新比较")
+                        image = self.server.desk.editor.comparison(root, query.get("shot_id", [""])[0], float(query.get("t", ["0"])[0]))
+                    stream = io.BytesIO()
+                    image.save(stream, "PNG")
+                    body = stream.getvalue()
+                    self.headers_for("image/png", len(body))
+                    self.end_headers()
+                    return self.wfile.write(body)
                 if pieces[3] == "file":
                     root = self.server.desk.project(project_id)
                     relative = parse_qs(parsed.query).get("path", [""])[0]
@@ -505,7 +578,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not target.is_file():
                         raise FileNotFoundError()
                     return self.send_file(target, download=parse_qs(parsed.query).get("download") == ["1"])
-            static = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/documents.css": "documents.css", "/workflow.js": "workflow.js", "/workflow.css": "workflow.css"}.get(path)
+            static = {"/": "studio.html", "/classic": "index.html", "/studio.js": "studio.js", "/studio.css": "studio.css", "/app.js": "app.js", "/style.css": "style.css", "/documents.css": "documents.css", "/workflow.js": "workflow.js", "/workflow.css": "workflow.css"}.get(path)
             if static:
                 return self.send_file(Path(__file__).parent / "static" / static)
             return self.json({"error": "找不到这个页面"}, 404)
@@ -573,13 +646,15 @@ class Handler(BaseHTTPRequestHandler):
                 raise StudioError("上传未完成，请重新提交")
             fields, files = parse_form(self.headers.get("Content-Type", ""), body)
             path = urlsplit(self.path).path
+            if path == "/api/demo":
+                return self.json(self.server.desk.demo(fields, files), 201)
             if path == "/api/projects":
                 return self.json(self.server.desk.submit(fields, files), 201)
             pieces = path.strip("/").split("/")
             if len(pieces) == 4 and pieces[:2] == ["api", "projects"] and pieces[3] == "feedback":
                 return self.json(self.server.desk.feedback(unquote(pieces[2]), fields, files))
             if len(pieces) == 4 and pieces[:2] == ["api", "projects"]:
-                routes = {"actions": self.server.desk.action, "plan-import": self.server.desk.import_plan,
+                routes = {"editor": self.server.desk.edit, "actions": self.server.desk.action, "plan-import": self.server.desk.import_plan,
                           "folder-scan": self.server.desk.folder_scan, "folder-confirm": self.server.desk.folder_confirm,
                           "shot-assets": self.server.desk.shot_asset, "timeline": self.server.desk.timeline}
                 if pieces[3] in routes:
@@ -587,7 +662,7 @@ class Handler(BaseHTTPRequestHandler):
             self.json({"error": "找不到这个操作"}, 404)
         except FileNotFoundError:
             self.json({"error": "找不到项目"}, 404)
-        except (StudioError, ValueError, UnicodeError, KeyError) as exc:
+        except (StudioError, ValueError, UnicodeError, KeyError, TypeError) as exc:
             self.json({"error": str(exc)}, 400)
         except (BrokenPipeError, ConnectionResetError, socket.timeout):
             pass
